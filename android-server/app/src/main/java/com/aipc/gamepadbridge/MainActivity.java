@@ -257,12 +257,19 @@ public class MainActivity extends Activity {
             return;
         }
         StringBuilder sb = new StringBuilder("Devices: ");
+        int shown = 0;
         for (int i = 0; i < ids.length; i++) {
-            if (i > 0) sb.append(", ");
+            if (!isGamepadDevice(ids[i])) continue; // only external gamepads
+            if (shown > 0) sb.append(", ");
             InputDevice d = InputDevice.getDevice(ids[i]);
             String nm = (d != null) ? d.getName() : ("id=" + ids[i]);
             int src = (d != null) ? d.getSources() : 0;
             sb.append(nm).append(" [").append(sourceName(src)).append("]");
+            shown++;
+        }
+        if (shown == 0) {
+            tvDevice.setText("No controllers yet");
+            return;
         }
         tvDevice.setText(sb.toString());
     }
