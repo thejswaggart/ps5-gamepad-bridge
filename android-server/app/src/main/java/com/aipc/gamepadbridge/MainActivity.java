@@ -261,12 +261,12 @@ public class MainActivity extends Activity {
         }
         for (int axis : MAP_AXES) {
             float value = event.getAxisValue(axis);
+            mapper.onAxis(axis, value); // always apply: 0.0f is a valid release/recenter
             if (value != 0.0f) {
                 append(String.format(Locale.US,
                         "AXIS %s = %.3f  device=%s",
                         MotionEvent.axisToString(axis), value,
                         deviceName(event.getDeviceId())));
-                mapper.onAxis(axis, value);
             }
         }
         return true;

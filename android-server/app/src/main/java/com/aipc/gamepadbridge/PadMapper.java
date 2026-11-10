@@ -9,13 +9,13 @@ import android.view.MotionEvent;
  * all access is synchronized.
  *
  * Key mapping (Xbox confirmed; app-level keycodes):
- *   A(96)->CROSS B(97)->CIRCLE X(99)->SQUARE Y(100)->TRIANGLE
+ *   A(96)->CIRCLE B(97)->CROSS X(99)->SQUARE Y(100)->TRIANGLE
  *   L1(102)->L1 R1(103)->R1 L3(106)->L3 R3(107)->R3
  *   DPAD 19/20/21/22 -> UP/DOWN/LEFT/RIGHT
- *   START(108)->CREATE(PS) SELECT(109)->SHARE MODE(110)->OPTIONS
+ *   START(108)->OPTIONS SELECT(109)->SHARE MODE(110)->CREATE(PS)
  * Axes:
  *   AXIS_X(0)->lx AXIS_Y(1)->ly AXIS_Z(2)->rx AXIS_RZ(5)->ry  (float -1..1, deadzone 0.08)
- *   AXIS_GAS(10)->l2 AXIS_BRAKE(11)->r2  (float 0..1)
+ *   AXIS_GAS(10)->r2 AXIS_BRAKE(11)->l2  (float 0..1)
  * Xbox L2/R2 are analog only (no digital click) -> no L2/R2 bits from keys.
  */
 public final class PadMapper {
@@ -72,11 +72,11 @@ public final class PadMapper {
             case MotionEvent.AXIS_RZ:    // 5 right stick y
                 state.ry = stickToU8(value);
                 break;
-            case MotionEvent.AXIS_GAS:   // 10 Xbox L2 (analog)
-                state.l2 = triggerToU8(value);
-                break;
-            case MotionEvent.AXIS_BRAKE: // 11 Xbox R2 (analog)
+            case MotionEvent.AXIS_GAS:   // 10 Xbox R2 (analog)
                 state.r2 = triggerToU8(value);
+                break;
+            case MotionEvent.AXIS_BRAKE: // 11 Xbox L2 (analog)
+                state.l2 = triggerToU8(value);
                 break;
             default:
                 break;
@@ -90,8 +90,8 @@ public final class PadMapper {
 
     private static int keyToBit(int keyCode) {
         switch (keyCode) {
-            case KEY_A:          return PadFrame.BTN_CROSS;
-            case KEY_B:          return PadFrame.BTN_CIRCLE;
+            case KEY_A:          return PadFrame.BTN_CIRCLE;
+            case KEY_B:          return PadFrame.BTN_CROSS;
             case KEY_X:          return PadFrame.BTN_SQUARE;
             case KEY_Y:          return PadFrame.BTN_TRIANGLE;
             case KEY_L1:         return PadFrame.BTN_L1;
@@ -102,9 +102,9 @@ public final class PadMapper {
             case KEY_DPAD_DOWN:  return PadFrame.BTN_DOWN;
             case KEY_DPAD_LEFT:  return PadFrame.BTN_LEFT;
             case KEY_DPAD_RIGHT: return PadFrame.BTN_RIGHT;
-            case KEY_START:      return PadFrame.BTN_CREATE;
+            case KEY_START:      return PadFrame.BTN_OPTIONS;
             case KEY_SELECT:     return PadFrame.BTN_SHARE;
-            case KEY_MODE:       return PadFrame.BTN_OPTIONS;
+            case KEY_MODE:       return PadFrame.BTN_CREATE;
             default:             return 0;
         }
     }
