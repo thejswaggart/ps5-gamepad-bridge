@@ -15,7 +15,7 @@ package com.aipc.gamepadbridge;
  *  15    1   ry
  *  16    1   l2      u8 0-255
  *  17    1   r2
- *  18    4   rsvd    =0
+ *  18    4   rsvd    (byte 0 = connected 0/1, rest = 0)
  *  22    8   ts      u64 ms
  *  30    2   pad     =0
  */
@@ -49,7 +49,7 @@ public final class PadFrame {
     public int buttons;
     public int lx, ly, rx, ry;
     public int l2, r2;
-    public int rsvd;
+    public int rsvd; // byte 0 (LSB) = connected 0/1, rest = 0
     public long ts;
     public int pad;
 

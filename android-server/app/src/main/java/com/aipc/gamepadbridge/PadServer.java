@@ -177,7 +177,7 @@ public final class PadServer {
         f.ry = s.ry;
         f.l2 = s.l2;
         f.r2 = s.r2;
-        f.rsvd = 0;
+        f.rsvd = s.connected; // byte 0 of rsvd = connected 0/1
         f.ts = System.currentTimeMillis();
         f.pad = 0;
         f.encode(buf, 0);

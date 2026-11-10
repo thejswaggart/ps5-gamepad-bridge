@@ -8,7 +8,7 @@
  * 32-byte little-endian PadFrame per tick at ~60 Hz. This payload parses
  * each frame into an ScePadData and injects it via the virtual DualSense.
  *
- * Flow: klog thread -> VDA create -> TCP client thread -> keep-alive.
+ * Flow: klog thread -> TCP client thread (drives VDA create/delete) -> keep-alive.
  */
 
 #include <stdarg.h>
@@ -199,6 +199,12 @@ static void inject_pad(int slot, const ScePadData *pad) {
     if (vr != 0 && !vdi_err_logged) { gp_log("VDI error 0x%08x\n",(uint32_t)vr); vdi_err_logged=1; }
 }
 
+/* Sleep ms while the phone link is down. The virtual device is deleted on
+ * link-down, so the PS5 shows no controller; there is nothing to inject. */
+static void link_down_sleep(int ms) {
+    usleep((useconds_t)(ms * 1000));
+}
+
 /* ── Settings: /data/ghostpad/config.ini ─────────────────────────────── */
 #define CONFIG_PATH "/data/ghostpad/config.ini"
 #define DEFAULT_CONFIG_TEXT \
@@ -239,6 +245,12 @@ static void load_config(void) {
     gp_log("config: phone_ip=%s phone_port=%d\n", g_phone_ip, g_phone_port);
 }
 
+/* VDA lifecycle (defined below): the TCP client thread creates the virtual
+ * DualSense when the phone reports a pad connected, and deletes it when the
+ * pad disconnects or the phone link drops. */
+static int32_t create_vda_for_slot(int slot);
+static void delete_vda_for_slot(int slot);
+
 /* ── TCP client: connect to the phone gamepad-bridge server ───────────── */
 /* One virtual DualSense (slot 0). Reconnects forever: connect every ~2 s,
  * stream 32-byte frames, parse -> inject, auto-reconnect on EOF/reset. */
@@ -252,7 +264,7 @@ static void *tcp_client(void *arg) {
         int sock = socket(AF_INET, SOCK_STREAM, 0);
         if (sock < 0) {
             gp_log("tcp: socket errno=%d (retry 2s)\n", errno);
-            usleep(2000000);
+            link_down_sleep(2000);
             continue;
         }
 
@@ -263,14 +275,14 @@ static void *tcp_client(void *arg) {
         if (inet_pton(AF_INET, g_phone_ip, &sin.sin_addr) != 1) {
             gp_log("tcp: bad phone_ip \"%s\" (retry 2s)\n", g_phone_ip);
             close(sock);
-            usleep(2000000);
+            link_down_sleep(2000);
             continue;
         }
 
         if (connect(sock, (struct sockaddr*)&sin, sizeof(sin)) != 0) {
             gp_log("tcp: connect errno=%d (retry 2s)\n", errno);
             close(sock);
-            usleep(2000000);
+            link_down_sleep(2000);
             continue;
         }
         gp_log("tcp: CONNECTED to %s\n", ipbuf);
@@ -279,6 +291,7 @@ static void *tcp_client(void *arg) {
         uint8_t buf[PADFRAME_SIZE];
         size_t got = 0;
         static uint32_t magic_warn = 0;
+        static int last_conn = -1;
         while (1) {
             ssize_t n = recv(sock, buf + got, PADFRAME_SIZE - got, 0);
             if (n <= 0) {
@@ -287,6 +300,11 @@ static void *tcp_client(void *arg) {
                 gp_log("tcp: EOF/reset (n=%d errno=%d) - reconnecting\n",
                        (int)n, n < 0 ? errno : 0);
                 close(sock);
+                if (last_conn != 0) {
+                    last_conn = 0;
+                    gp_log("pad: DISCONNECTED (phone link down)\n");
+                }
+                if (g_slots[0].vdi_ready) delete_vda_for_slot(0);
                 break;
             }
             got += (size_t)n;
@@ -300,21 +318,48 @@ static void *tcp_client(void *arg) {
                            f.magic, PADFRAME_MAGIC);
             }
 
-            ScePadData pad;
-            memset(&pad, 0, sizeof(pad));
-            pad.buttons          = f.buttons;
-            if (f.l2 > 16u) pad.buttons |= SCE_PAD_BUTTON_L2;
-            if (f.r2 > 16u) pad.buttons |= SCE_PAD_BUTTON_R2;
-            pad.leftStick.x      = f.lx;  pad.leftStick.y      = f.ly;
-            pad.rightStick.x     = f.rx;  pad.rightStick.y     = f.ry;
-            pad.analogButtons.l2 = f.l2;  pad.analogButtons.r2 = f.r2;
-            pad.quat.x = 0.0f; pad.quat.y = 0.0f; pad.quat.z = 0.0f; pad.quat.w = 1.0f;
-            pad.connected        = 1;
-            inject_pad(0, &pad);
+            int connected = PADFRAME_RSVD_CONNECTED(f.rsvd);
+            if (connected != last_conn) {
+                last_conn = connected;
+                gp_log("pad: %s\n", connected ? "CONNECTED" : "DISCONNECTED");
+            }
+
+            if (connected) {
+                /* Pad connected: make sure the virtual device exists, then
+                 * stream its data. Creation is what makes the PS5 show a
+                 * controller (the connected field alone is not honored). */
+                if (!g_slots[0].vdi_ready) {
+                    int32_t h = create_vda_for_slot(0);
+                    if (h >= 0) {
+                        g_slots[0].handle       = h;
+                        g_slots[0].vdi_ready    = 1;
+                        g_slots[0].inject_count = 0;
+                    } else {
+                        gp_log("tcp: VDA create failed (retry next frame)\n");
+                    }
+                }
+                if (g_slots[0].vdi_ready) {
+                    ScePadData pad;
+                    memset(&pad, 0, sizeof(pad));
+                    pad.buttons          = f.buttons;
+                    if (f.l2 > 16u) pad.buttons |= SCE_PAD_BUTTON_L2;
+                    if (f.r2 > 16u) pad.buttons |= SCE_PAD_BUTTON_R2;
+                    pad.leftStick.x      = f.lx;  pad.leftStick.y      = f.ly;
+                    pad.rightStick.x     = f.rx;  pad.rightStick.y     = f.ry;
+                    pad.analogButtons.l2 = f.l2;  pad.analogButtons.r2 = f.r2;
+                    pad.quat.w = 1.0f;
+                    pad.connected = 1;
+                    inject_pad(0, &pad);
+                }
+            } else {
+                /* Pad disconnected: remove the virtual device so the PS5
+                 * shows no controller. */
+                if (g_slots[0].vdi_ready) delete_vda_for_slot(0);
+            }
 
             got = 0;
         }
-        usleep(500000); /* brief pause before reconnect */
+        link_down_sleep(500); /* brief pause before reconnect (no controller) */
     }
     return NULL;
 }
@@ -357,6 +402,20 @@ static int32_t create_vda_for_slot(int slot) {
     else
         gp_log("slot[%d] ERROR: no VDA handle\n", slot);
     return handle;
+}
+
+/* Delete the virtual device for a slot: the PS5 then shows NO controller.
+ * (The PS5 does not honor the injected connected field; device existence
+ * is what the system UI tracks. See R1.) */
+static void delete_vda_for_slot(int slot) {
+    int32_t h = g_slots[slot].handle;
+    if (h >= 0) {
+        scePadVirtualDeviceDeleteDevice(h);
+        gp_log("slot[%d] VDA deleted (handle=0x%x)\n", slot, (uint32_t)h);
+    }
+    g_slots[slot].handle       = -1;
+    g_slots[slot].vdi_ready    = 0;
+    g_slots[slot].inject_count = 0;
 }
 
 /* ── Credentials ──────────────────────────────────────────────────────── */
@@ -418,11 +477,9 @@ int main(void) {
     }
     usleep(300000); /* let klog thread connect before first VDA */
 
-    /* Create the single virtual DualSense */
-    int32_t h = create_vda_for_slot(0);
-    g_slots[0].handle    = h;
-    g_slots[0].vdi_ready = (h >= 0) ? 1 : 0;
-    if (h < 0) gp_log("ERROR: no VDA handle - injection disabled\n");
+    /* The virtual DualSense is created/deleted dynamically by the TCP
+     * client thread from the phone's connected state. It starts DOWN: the
+     * PS5 shows no controller until the phone reports a pad connected. */
 
     /* Start TCP client thread (connect to the phone) */
     pthread_t tcp_tid;

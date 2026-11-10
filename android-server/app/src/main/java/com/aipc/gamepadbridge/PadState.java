@@ -8,6 +8,7 @@ public final class PadState {
     public int buttons;
     public int lx, ly, rx, ry;
     public int l2, r2;
+    public int connected; // 1 = a gamepad is connected to the phone
 
     public PadState() {
         // Sticks start at center so the PS5 reads them as centered at rest
@@ -25,6 +26,7 @@ public final class PadState {
             ry = src.ry;
             l2 = src.l2;
             r2 = src.r2;
+            connected = src.connected;
         }
     }
 }

@@ -24,12 +24,15 @@ int main(int argc, char **argv) {
         if (got<32) continue;
         PadFrame f; memcpy(&f,buf,sizeof f);
         if (f.magic!=PADFRAME_MAGIC){printf("MAGIC BAD 0x%08x\n",f.magic);return 2;}
+        int connected = PADFRAME_RSVD_CONNECTED(f.rsvd);
         ScePadData pad; memset(&pad,0,sizeof pad);
-        pad.buttons=f.buttons;
-        pad.leftStick.x=f.lx;pad.leftStick.y=f.ly;
-        pad.rightStick.x=f.rx;pad.rightStick.y=f.ry;
-        pad.analogButtons.l2=f.l2;pad.analogButtons.r2=f.r2;
-        pad.quat.w=1.0f; pad.connected=1;
+        if (connected) {
+            pad.buttons=f.buttons;
+            pad.leftStick.x=f.lx;pad.leftStick.y=f.ly;
+            pad.rightStick.x=f.rx;pad.rightStick.y=f.ry;
+            pad.analogButtons.l2=f.l2;pad.analogButtons.r2=f.r2;
+        }
+        pad.quat.w=1.0f; pad.connected=connected;
         printf("seq=%u buttons=0x%04x L(%d,%d) R(%d,%d) L2=%d R2=%d conn=%d\n",
                f.seq,pad.buttons,pad.leftStick.x,pad.leftStick.y,
                pad.rightStick.x,pad.rightStick.y,pad.analogButtons.l2,

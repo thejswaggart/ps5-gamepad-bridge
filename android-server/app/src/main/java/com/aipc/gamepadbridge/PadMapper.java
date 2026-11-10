@@ -41,6 +41,7 @@ public final class PadMapper {
     private static final int KEY_DPAD_RIGHT = 22;
 
     private final PadState state = new PadState();
+    private volatile boolean padConnected = false;
 
     public synchronized void onKey(int keyCode, boolean pressed) {
         int bit = keyToBit(keyCode);
@@ -104,6 +105,26 @@ public final class PadMapper {
     /** Thread-safe snapshot of the current state. */
     public synchronized void getState(PadState out) {
         out.copyFrom(state);
+        out.connected = padConnected ? 1 : 0;
+    }
+
+    /**
+     * Set whether a physical gamepad is connected to the phone.
+     * On disconnect, all input is cleared so a later reconnect starts clean.
+     */
+    public synchronized void setPadConnected(boolean connected) {
+        if (connected == padConnected) return;
+        padConnected = connected;
+        Log.i(TAG, "pad link " + (connected ? "CONNECTED" : "DISCONNECTED"));
+        if (!connected) {
+            state.buttons = 0;
+            state.lx = state.ly = state.rx = state.ry = 128;
+            state.l2 = state.r2 = 0;
+        }
+    }
+
+    public synchronized boolean isPadConnected() {
+        return padConnected;
     }
 
     private static int keyToBit(int keyCode) {

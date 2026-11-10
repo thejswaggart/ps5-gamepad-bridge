@@ -53,7 +53,7 @@
  *  15    1   ry
  *  16    1   l2      (L2 trigger 0-255)
  *  17    1   r2      (R2 trigger 0-255)
- *  18    4   rsvd    (=0)
+ *  18    4   rsvd    (byte0=connected 0/1, rest=0)
  *  22    8   ts      (u64 timestamp, ms)
  *  30    2   pad     (=0)
  *  -> total 32
@@ -75,6 +75,16 @@ typedef struct __attribute__((packed)) {
 
 _Static_assert(sizeof(PadFrame) == PADFRAME_SIZE,
                "PadFrame must be exactly 32 bytes");
+
+/*
+ * rsvd (offset 18, u32): byte 0 = gamepad link state, bytes 1-3 = 0.
+ *   1 = a physical gamepad is connected to the phone
+ *   0 = no gamepad on the phone
+ * The PS5 payload mirrors it into ScePadData.connected so the system
+ * shows the controller connected/disconnected accordingly.
+ */
+#define PADFRAME_RSVD_OFF          18u
+#define PADFRAME_RSVD_CONNECTED(rsvd) (((rsvd) & 0xFFu) == 1u)
 
 /* Center value for the 0-255 stick/trigger encoding. */
 #define PADFRAME_CENTER 128
