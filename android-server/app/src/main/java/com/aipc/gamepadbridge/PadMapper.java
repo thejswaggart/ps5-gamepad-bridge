@@ -108,8 +108,8 @@ public final class PadMapper {
 
     private static int keyToBit(int keyCode) {
         switch (keyCode) {
-            case KEY_A:          return PadFrame.BTN_CIRCLE;
-            case KEY_B:          return PadFrame.BTN_CROSS;
+            case KEY_A:          return PadFrame.BTN_CROSS;
+            case KEY_B:          return PadFrame.BTN_CIRCLE;
             case KEY_X:          return PadFrame.BTN_SQUARE;
             case KEY_Y:          return PadFrame.BTN_TRIANGLE;
             case KEY_L1:         return PadFrame.BTN_L1;
