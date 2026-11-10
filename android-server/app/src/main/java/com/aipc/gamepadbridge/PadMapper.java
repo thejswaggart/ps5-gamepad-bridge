@@ -78,6 +78,24 @@ public final class PadMapper {
             case MotionEvent.AXIS_BRAKE: // 11 Xbox L2 (analog)
                 state.l2 = triggerToU8(value);
                 break;
+            case MotionEvent.AXIS_HAT_X: // 3 D-pad x (arrives as mouse motion; -1=LEFT +1=RIGHT)
+                if (value < -0.5f) {
+                    state.buttons |= PadFrame.BTN_LEFT;
+                } else if (value > 0.5f) {
+                    state.buttons |= PadFrame.BTN_RIGHT;
+                } else {
+                    state.buttons &= ~(PadFrame.BTN_LEFT | PadFrame.BTN_RIGHT);
+                }
+                break;
+            case MotionEvent.AXIS_HAT_Y: // 4 D-pad y (mouse motion; -1=UP +1=DOWN, flip if user reports swap)
+                if (value < -0.5f) {
+                    state.buttons |= PadFrame.BTN_UP;
+                } else if (value > 0.5f) {
+                    state.buttons |= PadFrame.BTN_DOWN;
+                } else {
+                    state.buttons &= ~(PadFrame.BTN_UP | PadFrame.BTN_DOWN);
+                }
+                break;
             default:
                 break;
         }

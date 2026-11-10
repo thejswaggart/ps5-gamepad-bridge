@@ -51,6 +51,8 @@ public class MainActivity extends Activity {
             MotionEvent.AXIS_Y,     // 1 left y
             MotionEvent.AXIS_Z,     // 2 right x
             MotionEvent.AXIS_RZ,   // 5 right y
+            MotionEvent.AXIS_HAT_X,  // 3 D-pad x
+            MotionEvent.AXIS_HAT_Y,  // 4 D-pad y
             MotionEvent.AXIS_GAS,   // 10 Xbox L2
             MotionEvent.AXIS_BRAKE // 11 Xbox R2
     };
