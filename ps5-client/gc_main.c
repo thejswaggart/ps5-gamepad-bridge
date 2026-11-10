@@ -303,6 +303,8 @@ static void *tcp_client(void *arg) {
             ScePadData pad;
             memset(&pad, 0, sizeof(pad));
             pad.buttons          = f.buttons;
+            if (f.l2 > 16u) pad.buttons |= SCE_PAD_BUTTON_L2;
+            if (f.r2 > 16u) pad.buttons |= SCE_PAD_BUTTON_R2;
             pad.leftStick.x      = f.lx;  pad.leftStick.y      = f.ly;
             pad.rightStick.x     = f.rx;  pad.rightStick.y     = f.ry;
             pad.analogButtons.l2 = f.l2;  pad.analogButtons.r2 = f.r2;
