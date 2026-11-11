@@ -29,7 +29,9 @@ public class MappingActivity extends Activity {
 
     private static final int KEY_ESC = 111; // Linux input ESC
 
+    private GamepadBridgeApp app;
     private KeyMap keyMap;
+    private TextView tvProfile;
     private final TextView[] rows = new TextView[KeyMap.PS5_BITS.length];
     private LinearLayout rowsBox;
     private CheckBox cbTrig;
@@ -50,7 +52,10 @@ public class MappingActivity extends Activity {
         setContentView(R.layout.activity_mapping);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-        keyMap = ((GamepadBridgeApp) getApplication()).getKeyMap();
+        app = (GamepadBridgeApp) getApplication();
+        keyMap = app.getKeyMap();
+        tvProfile = findViewById(R.id.tv_profile);
+        tvProfile.setText("PROFILE: " + app.getCurrentProfileName());
 
         rowsBox = findViewById(R.id.rows);
         cbTrig = findViewById(R.id.cb_trig);
@@ -61,7 +66,7 @@ public class MappingActivity extends Activity {
         btnMain.setOnClickListener(v -> finish());
         btnReset.setOnClickListener(v -> {
             keyMap.reset();
-            keyMap.save(this);
+            app.saveCurrent();
             cbTrig.setChecked(false);
             refreshAll();
             toast("RESET TO STOCK XBOX MAP");
@@ -71,7 +76,7 @@ public class MappingActivity extends Activity {
         cbTrig.setChecked(keyMap.isTriggersAsButtons());
         cbTrig.setOnCheckedChangeListener((b, c) -> {
             keyMap.setTriggersAsButtons(c);
-            keyMap.save(this);
+            app.saveCurrent();
             refreshAll();
         });
 
@@ -82,15 +87,20 @@ public class MappingActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (keyMap != null) refreshAll();
+        if (keyMap != null) {
+            refreshAll();
+            tvProfile.setText("PROFILE: " + app.getCurrentProfileName());
+        }
     }
 
     private void buildRows() {
         for (int i = 0; i < KeyMap.PS5_BITS.length; i++) {
             final int bit = KeyMap.PS5_BITS[i];
             TextView row = new TextView(this);
-            row.setTextSize(14);
+            row.setTextSize(16);
             row.setTypeface(android.graphics.Typeface.MONOSPACE);
+            row.setMinHeight(dp(56));
+            row.setPadding(16, dp(10), 16, dp(10));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -105,7 +115,7 @@ public class MappingActivity extends Activity {
             });
             row.setOnLongClickListener(v -> {
                 keyMap.unbindBit(bit);
-                keyMap.save(this);
+                app.saveCurrent();
                 if (armedBit == bit) disarm();
                 refreshAll();
                 toast("UNMAPPED " + KeyMap.buttonName(bit));
@@ -190,7 +200,7 @@ public class MappingActivity extends Activity {
             }
             if (armedBit != 0 && DeviceProbe.isGamepadDevice(event.getDeviceId())) {
                 keyMap.bind(event.getKeyCode(), armedBit);
-                keyMap.save(this);
+                app.saveCurrent();
                 String who = KeyEvent.keyCodeToString(event.getKeyCode());
                 toast("MAPPED " + who + " -> " + KeyMap.buttonName(armedBit));
                 disarm();
@@ -199,5 +209,11 @@ public class MappingActivity extends Activity {
             }
         }
         return true; // consume everything (the app never exits mid-test)
+    }
+
+    /** dp -> px for touch-target sizing. */
+    private int dp(int v) {
+        float scale = getResources().getDisplayMetrics().density;
+        return Math.round(v * scale);
     }
 }

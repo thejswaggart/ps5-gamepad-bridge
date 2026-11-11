@@ -1,13 +1,10 @@
 package com.aipc.gamepadbridge;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.util.Log;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
+import java.io.File;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -21,15 +18,14 @@ import java.util.Map;
  *   - the key -> bit map (many keys may drive one bit; a key drives at
  *     most one bit)
  *   - the L2/R2 trigger mode (pressure = analog axes, button = key events)
- *   - persistence (SharedPreferences JSON)
+ *   - persistence: one INI profile file per controller, loaded when that
+ *     controller connects and saved on every edit in the mapping screen.
  *
- * A fresh install (no prefs) is exactly the stock Xbox mapping the app
- * always had, so behavior is unchanged until the user edits it.
+ * A fresh install (no profile file) is exactly the stock Xbox mapping the
+ * app always had, so behavior is unchanged until the user edits it.
  */
 public final class KeyMap {
     private static final String TAG = "KeyMap";
-    private static final String PREFS = "keymap";
-    private static final String KEY_JSON = "map";
 
     /** PS5 button table: one row per entry, in the mapping screen. */
     public static final int[] PS5_BITS = {
@@ -137,45 +133,110 @@ public final class KeyMap {
 
     public int size() { return keyToBit.size(); }
 
-    // ---- persistence (SharedPreferences, one JSON string) ----
+    // ---- persistence: one INI profile file per controller ----
+    //
+    // The keymap is stored as a small INI file per controller, named by the
+    // controller's (sanitized) name, under <files>/profiles/. It is loaded
+    // when that controller connects and saved on every edit in the mapping
+    // screen. A controller with no file yet starts at the stock map.
 
-    public void load(Context ctx) {
+    /** The on-disk directory holding the profile files. */
+    static File profilesDir(Context ctx) {
+        File base = ctx.getExternalFilesDir(null);
+        if (base == null) base = ctx.getFilesDir();
+        File dir = new File(base, "profiles");
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
+    }
+
+    /** Sanitize a controller name into a safe filename component. */
+    static String safeKey(String name) {
+        if (name == null) name = "";
+        String s = name.trim();
+        if (s.isEmpty()) return "default";
+        StringBuilder sb = new StringBuilder();
+        for (char c : s.toCharArray()) {
+            if (Character.isLetterOrDigit(c) || c == '-' || c == '_') sb.append(c);
+            else sb.append('_');
+        }
+        String key = sb.toString();
+        if (key.length() > 48) key = key.substring(0, 48);
+        return key;
+    }
+
+    /**
+     * Load the profile for this controller into the in-memory map. A
+     * controller with no saved file yet starts at the stock map.
+     */
+    public void loadProfile(Context ctx, String key) {
         try {
-            SharedPreferences sp = ctx.getSharedPreferences(PREFS, 0);
-            String j = sp.getString(KEY_JSON, null);
-            if (j == null) return; // fresh install: stock table
-            JSONObject o = new JSONObject(j);
-            JSONArray ks = o.optJSONArray("keys");
-            if (ks != null) {
-                keyToBit.clear();
-                for (int i = 0; i < ks.length(); i++) {
-                    JSONObject p = ks.optJSONObject(i);
-                    if (p == null) continue;
-                    keyToBit.put(p.getInt("k"), p.getInt("b"));
+            File f = new File(profilesDir(ctx), key + ".ini");
+            if (!f.exists()) {
+                reset(); // no file yet: fresh controller = stock map
+                return;
+            }
+            java.util.List<String> lines = new java.util.ArrayList<>();
+            try (java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.FileReader(f))) {
+                String line;
+                while ((line = r.readLine()) != null) lines.add(line);
+            }
+            keyToBit.clear();
+            triggersAsButtons = false;
+            String section = "";
+            for (String line : lines) {
+                String t = line.trim();
+                if (t.isEmpty() || t.startsWith(";")) continue;
+                if (t.startsWith("[") && t.endsWith("]")) {
+                    section = t.substring(1, t.length() - 1).trim();
+                    continue;
+                }
+                if (section.equals("map")) {
+                    int eq = t.indexOf('=');
+                    if (eq < 0) continue;
+                    try {
+                        int k = Integer.parseInt(t.substring(0, eq).trim());
+                        int b = Integer.parseInt(t.substring(eq + 1).trim());
+                        keyToBit.put(k, b);
+                    } catch (Exception e) {
+                        Log.w(TAG, "loadProfile: bad line " + t);
+                    }
+                } else if (section.equals("options")) {
+                    int eq = t.indexOf('=');
+                    if (eq >= 0 && t.substring(0, eq).trim().equals("triggersAsButtons")) {
+                        triggersAsButtons = t.substring(eq + 1).trim().equals("1");
+                    }
                 }
             }
-            triggersAsButtons = o.optBoolean("trigButtons", false);
         } catch (Exception e) {
-            Log.w(TAG, "load: " + e);
+            Log.w(TAG, "loadProfile: " + e);
         }
     }
 
-    public void save(Context ctx) {
+    /** Save the in-memory map as the profile for this controller. */
+    public void saveProfile(Context ctx, String key, String displayName) {
         try {
-            JSONObject o = new JSONObject();
-            JSONArray ks = new JSONArray();
-            for (Map.Entry<Integer, Integer> e : keyToBit.entrySet()) {
-                JSONObject p = new JSONObject();
-                p.put("k", e.getKey());
-                p.put("b", e.getValue());
-                ks.put(p);
+            File f = new File(profilesDir(ctx), key + ".ini");
+            StringBuilder sb = new StringBuilder();
+            sb.append("; GhostPad keymap profile\n");
+            sb.append("; controller: ").append(displayName == null ? "default" : displayName).append("\n");
+            sb.append("; generated: ").append(new java.text.SimpleDateFormat(
+                    "yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(new java.util.Date())).append("\n");
+            sb.append("[map]\n");
+            java.util.List<Map.Entry<Integer, Integer>> entries =
+                    new java.util.ArrayList<>(keyToBit.entrySet());
+            entries.sort((a, b) -> a.getKey() - b.getKey());
+            for (Map.Entry<Integer, Integer> e : entries) {
+                sb.append(e.getKey()).append('=').append(e.getValue()).append("\n");
             }
-            o.put("keys", ks);
-            o.put("trigButtons", triggersAsButtons);
-            ctx.getSharedPreferences(PREFS, 0)
-               .edit().putString(KEY_JSON, o.toString()).commit();
+            sb.append("[options]\n");
+            sb.append("triggersAsButtons=").append(triggersAsButtons ? "1" : "0").append("\n");
+            try (java.io.Writer w = new java.io.OutputStreamWriter(
+                    new java.io.FileOutputStream(f), "UTF-8")) {
+                w.write(sb.toString());
+            }
         } catch (Exception e) {
-            Log.w(TAG, "save: " + e);
+            Log.w(TAG, "saveProfile: " + e);
         }
     }
 }

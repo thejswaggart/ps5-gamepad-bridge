@@ -23,6 +23,8 @@ public class GamepadBridgeApp extends Application {
     private KeyMap keyMap;
     private PadMapper mapper;
     private PadServer server;
+    private String currentProfileKey = "default";
+    private String currentProfileName = "default";
 
     @Override
     public void onCreate() {
@@ -32,11 +34,28 @@ public class GamepadBridgeApp extends Application {
         PowerManager.WakeLock wl = pm.newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK, "gamepad-bridge:pad-server");
         keyMap = new KeyMap();
-        keyMap.load(this);
         mapper = new PadMapper(keyMap);
         server = new PadServer(mapper, wl, null);
         server.start();
     }
+
+    /**
+     * Called when a gamepad connects: remember which controller it is and
+     * load that controller's saved profile into the live KeyMap.
+     */
+    public void onGamepadConnected(String name) {
+        currentProfileKey = KeyMap.safeKey(name);
+        currentProfileName = (name == null || name.isEmpty()) ? "default" : name;
+        keyMap.loadProfile(this, currentProfileKey);
+    }
+
+    /** Persist the current KeyMap as the active controller's profile file. */
+    public void saveCurrent() {
+        keyMap.saveProfile(this, currentProfileKey, currentProfileName);
+    }
+
+    public String getCurrentProfileKey() { return currentProfileKey; }
+    public String getCurrentProfileName() { return currentProfileName; }
 
     public static GamepadBridgeApp get() {
         return instance;

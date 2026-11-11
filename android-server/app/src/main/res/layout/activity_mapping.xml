@@ -45,6 +45,16 @@
         android:paddingEnd="8dp"
         android:text="TAP a row, then PRESS ANY BUTTON on the pad.\nLong-press a row to unmap it. ESC or CANCEL cancels." />
 
+    <TextView
+        android:id="@+id/tv_profile"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fontFamily="monospace"
+        android:textSize="12sp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:text="PROFILE: (loading...)" />
+
     <ScrollView
         android:id="@+id/scroll_rows"
         android:layout_width="match_parent"

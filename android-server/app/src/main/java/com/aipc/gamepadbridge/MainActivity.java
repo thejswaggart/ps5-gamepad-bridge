@@ -128,6 +128,8 @@ public class MainActivity extends Activity {
         inputManager.registerInputDeviceListener(deviceListener, mainHandler);
         refreshDeviceHeader();
         seedConnectedGamepads(); // covers "pad already connected at app launch"
+        String sname = firstConnectedGamepadName();
+        if (sname != null) app.onGamepadConnected(sname);
 
         // Live readout @10Hz.
         mainHandler.postDelayed(readoutTick, 100);
@@ -194,6 +196,15 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** Name of the first connected gamepad (for profile loading at startup). */
+    private String firstConnectedGamepadName() {
+        for (int id : connectedGamepads) {
+            String n = deviceName(id);
+            if (n != null && !n.startsWith("id=")) return n;
+        }
+        return null;
+    }
+
     private void onDeviceEvent(int id, String what) {
         String name = deviceName(id);
         String msg = "DEVICE " + what + "  " + name + " (id " + id + ")";
@@ -203,6 +214,8 @@ public class MainActivity extends Activity {
         if ("CONNECTED".equals(what)) {
             if (DeviceProbe.isGamepadDevice(id)) {
                 connectedGamepads.add(id);
+                GamepadBridgeApp app = (GamepadBridgeApp) getApplication();
+                app.onGamepadConnected(name);
             }
         } else if ("DISCONNECTED".equals(what)) {
             connectedGamepads.remove(id);
