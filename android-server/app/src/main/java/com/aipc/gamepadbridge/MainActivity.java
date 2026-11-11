@@ -1,6 +1,7 @@
 package com.aipc.gamepadbridge;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.content.Context;
 import android.hardware.input.InputManager;
 import android.os.Build;
@@ -41,6 +42,7 @@ public class MainActivity extends Activity {
     private TextView tvPs5;
     private Button btnScan;
     private Button btnDeploy;
+    private Button btnMapping;
     private EditText etIp;
     private EditText etPort;
     // Last IP found by a network scan (deploy target when et_ip is blank).
@@ -87,6 +89,9 @@ public class MainActivity extends Activity {
         etIp = findViewById(R.id.et_ip);
         etPort = findViewById(R.id.et_port);
         etPort.setText("9021");
+        btnMapping = findViewById(R.id.btn_mapping);
+        btnMapping.setOnClickListener(v ->
+                startActivity(new Intent(this, MappingActivity.class)));
         btnScan.setOnClickListener(v -> onScan());
         btnDeploy.setOnClickListener(v -> onDeploy());
 
@@ -196,47 +201,19 @@ public class MainActivity extends Activity {
         Log.i(TAG, msg);
         refreshDeviceHeader();
         if ("CONNECTED".equals(what)) {
-            if (isGamepadDevice(id)) {
+            if (DeviceProbe.isGamepadDevice(id)) {
                 connectedGamepads.add(id);
             }
         } else if ("DISCONNECTED".equals(what)) {
             connectedGamepads.remove(id);
         } else { // CHANGED: re-evaluate source
-            if (isGamepadDevice(id)) {
+            if (DeviceProbe.isGamepadDevice(id)) {
                 connectedGamepads.add(id);
             } else {
                 connectedGamepads.remove(id);
             }
         }
         updatePadConnected();
-    }
-
-    /** True if this is an external device (USB/Bluetooth), not built-in. */
-    private boolean isExternalDevice(InputDevice d) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            return d.isExternal();
-        }
-        try {
-            java.lang.reflect.Method m = d.getClass().getMethod("isExternal");
-            m.setAccessible(true);
-            Object r = m.invoke(d);
-            return (r instanceof Boolean) ? (Boolean) r : false;
-        } catch (Exception e) {
-            Log.w(TAG, "isExternal reflect failed", e);
-            return false;
-        }
-    }
-
-    /** True if this (non-virtual) device is external and exposes a gamepad-class source. */
-    private boolean isGamepadDevice(int id) {
-        if (id == -1) return false; // -1 == InputDevice virtual device id
-        InputDevice d = InputDevice.getDevice(id);
-        if (d == null) return false;
-        if (!isExternalDevice(d)) return false; // skip built-in touchscreens
-        int src = d.getSources();
-        return (src & (InputDevice.SOURCE_GAMEPAD
-                | InputDevice.SOURCE_JOYSTICK
-                | InputDevice.SOURCE_DPAD)) != 0;
     }
 
     /** Push the wire "connected" flag from the tracked gamepad set. */
@@ -254,7 +231,7 @@ public class MainActivity extends Activity {
         }
         if (ids != null) {
             for (int i = 0; i < ids.length; i++) {
-                if (isGamepadDevice(ids[i])) {
+                if (DeviceProbe.isGamepadDevice(ids[i])) {
                     connectedGamepads.add(ids[i]);
                 }
             }
@@ -278,7 +255,7 @@ public class MainActivity extends Activity {
         StringBuilder sb = new StringBuilder("Devices: ");
         int shown = 0;
         for (int i = 0; i < ids.length; i++) {
-            if (!isGamepadDevice(ids[i])) continue; // only external gamepads
+            if (!DeviceProbe.isGamepadDevice(ids[i])) continue; // only external gamepads
             if (shown > 0) sb.append(", ");
             InputDevice d = InputDevice.getDevice(ids[i]);
             String nm = (d != null) ? d.getName() : ("id=" + ids[i]);

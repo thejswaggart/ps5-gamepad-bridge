@@ -5,7 +5,7 @@ import android.content.Context;
 import android.os.PowerManager;
 
 /**
- * Process-level owner of the PadMapper + PadServer.
+ * Process-level owner of the KeyMap + PadMapper + PadServer.
  *
  * Why this exists: the PadServer binds a TCP port for the life of the
  * process. If it were created in Activity.onCreate, an Activity recreation
@@ -20,6 +20,7 @@ public class GamepadBridgeApp extends Application {
 
     private static GamepadBridgeApp instance;
 
+    private KeyMap keyMap;
     private PadMapper mapper;
     private PadServer server;
 
@@ -30,13 +31,19 @@ public class GamepadBridgeApp extends Application {
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         PowerManager.WakeLock wl = pm.newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK, "gamepad-bridge:pad-server");
-        mapper = new PadMapper();
+        keyMap = new KeyMap();
+        keyMap.load(this);
+        mapper = new PadMapper(keyMap);
         server = new PadServer(mapper, wl, null);
         server.start();
     }
 
     public static GamepadBridgeApp get() {
         return instance;
+    }
+
+    public KeyMap getKeyMap() {
+        return keyMap;
     }
 
     public PadMapper getMapper() {
