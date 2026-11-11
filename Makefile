@@ -1,7 +1,8 @@
 # ps5-gamepad-bridge — top-level build
 #
 #   make              build both android-server and ps5-client
-#   make android      build the Android app only
+#   make android      build the Android app (payload is built first and
+#                     bundled into the APK as an asset)
 #   make ps5          build the PS5 payload only
 #   make clean        clean both
 #   make clean-android
@@ -18,9 +19,11 @@ export PS5_PAYLOAD_SDK
 
 .PHONY: all android ps5 clean clean-android clean-ps5 deploy
 
-all: android ps5
+all: android
 
-android:
+android: ps5
+	@mkdir -p $(ANDROID_DIR)/app/src/main/assets
+	cp -f $(PS5_DIR)/ghostpad-net.elf $(ANDROID_DIR)/app/src/main/assets/
 	cd $(ANDROID_DIR) && ./gradlew assembleDebug
 
 ps5:
