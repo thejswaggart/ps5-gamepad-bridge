@@ -23,6 +23,7 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
+#include <poll.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
@@ -210,21 +211,29 @@ static void link_down_sleep(int ms) {
 #define DEFAULT_CONFIG_TEXT \
     "# ghostpad-net settings - edit over FTP, then restart the payload.\n" \
     "#\n" \
-    "# phone_ip   : IP address of the Android gamepad-bridge server (phone).\n" \
+    "# phone_ip   : phone server IP, or 'auto' to auto-discover (LAN scan).\n" \
     "# phone_port : TCP port the phone listens on (default 8471).\n" \
-    "phone_ip = 192.168.1.131\n" \
+    "phone_ip = auto\n" \
     "phone_port = 8471\n"
 
-static char g_phone_ip[64] = "192.168.1.131";
+static char g_ip_pref[64];
+static int  g_ip_pref_valid = 0;
 static int  g_phone_port  = 8471;
+
+static int parse_dotted_quad(const char *s, uint32_t *out) {
+    struct in_addr a;
+    if (inet_pton(AF_INET, s, &a) != 1) return -1;
+    *out = (uint32_t)ntohl(a.s_addr);
+    return 0;
+}
 
 static void load_config(void) {
     FILE *f = fopen(CONFIG_PATH, "r");
     if (!f) {
         f = fopen(CONFIG_PATH, "w");
         if (f) { fputs(DEFAULT_CONFIG_TEXT, f); fclose(f); }
-        gp_log("config: %s created with defaults (phone_ip=%s:%d)\n",
-               CONFIG_PATH, g_phone_ip, g_phone_port);
+        gp_log("config: %s created with defaults (phone_ip=auto phone_port=%d)\n",
+               CONFIG_PATH, g_phone_port);
         return;
     }
     char line[128];
@@ -234,7 +243,15 @@ static void load_config(void) {
         if (*p == '#' || *p == ';' || *p == '\n' || *p == 0) continue;
         if (sscanf(p, " %31[^= \t] = %63s", key, val) != 2) continue;
         if (strcmp(key, "phone_ip") == 0) {
-            snprintf(g_phone_ip, sizeof(g_phone_ip), "%s", val);
+            uint32_t ip;
+            if (parse_dotted_quad(val, &ip) == 0) {
+                snprintf(g_ip_pref, sizeof(g_ip_pref), "%u.%u.%u.%u",
+                         (unsigned)((ip>>24)&0xff), (unsigned)((ip>>16)&0xff),
+                         (unsigned)((ip>>8)&0xff), (unsigned)(ip&0xff));
+                g_ip_pref_valid = 1;
+            } else {
+                g_ip_pref_valid = 0;
+            }
         } else if (strcmp(key, "phone_port") == 0) {
             int v = atoi(val);
             if (v > 0 && v < 65536) g_phone_port = v;
@@ -242,7 +259,8 @@ static void load_config(void) {
         }
     }
     fclose(f);
-    gp_log("config: phone_ip=%s phone_port=%d\n", g_phone_ip, g_phone_port);
+    gp_log("config: phone_ip=%s phone_port=%d\n",
+           g_ip_pref_valid ? g_ip_pref : "auto", g_phone_port);
 }
 
 /* VDA lifecycle (defined below): the TCP client thread creates the virtual
@@ -250,17 +268,179 @@ static void load_config(void) {
  * pad disconnects or the phone link drops. */
 static int32_t create_vda_for_slot(int slot);
 static void delete_vda_for_slot(int slot);
+/* ── LAN discovery: find the phone's IP by port-scanning our /24 ─────── */
+/*
+ * The phone's IP can change (DHCP). If no valid phone_ip is pinned in the
+ * config, we sweep the /24 that contains our own address and probe each
+ * host for the phone's TCP port; the first open port is the phone. A small
+ * pool of threads makes the sweep finish in a couple of seconds.
+ */
+
+#define SCAN_THREADS 32          /* concurrent probe threads            */
+#define SCAN_TIMEOUT_MS 300     /* per-probe connect timeout            */
+#define TCP_RESCAN_AFTER_FAILS 5 /* connect fails before we re-scan    */
+
+/* Return our own IPv4 address in HOST byte order, using the UDP connect
+ * trick: connect() to 8.8.8.8:80 sends no packet, it only selects a route,
+ * so getsockname() reveals the local address even when offline. 0 on fail. */
+static uint32_t get_own_ip(void) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return 0;
+    struct sockaddr_in dst;
+    memset(&dst, 0, sizeof(dst));
+    dst.sin_family      = AF_INET;
+    dst.sin_port        = htons(80);
+    dst.sin_addr.s_addr = htonl(0x08080808u); /* 8.8.8.8 */
+    if (connect(fd, (struct sockaddr*)&dst, sizeof(dst)) != 0) {
+        close(fd);
+        return 0;
+    }
+    struct sockaddr_in local;
+    socklen_t len = sizeof(local);
+    if (getsockname(fd, (struct sockaddr*)&local, &len) != 0) {
+        close(fd);
+        return 0;
+    }
+    close(fd);
+    return (uint32_t)ntohl(local.sin_addr.s_addr);
+}
+
+/* Try a TCP connect to ip_host (HOST order):port with a timeout in ms.
+ * Returns 0 on success, -1 on failure. Always closes the socket. */
+static int connect_timeout(uint32_t ip_host, int port, int timeout_ms) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    int fl = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+    struct sockaddr_in sin;
+    memset(&sin, 0, sizeof(sin));
+    sin.sin_family      = AF_INET;
+    sin.sin_port        = htons((uint16_t)port);
+    sin.sin_addr.s_addr = htonl(ip_host);
+    int rc = connect(fd, (struct sockaddr*)&sin, sizeof(sin));
+    if (rc == 0) {
+        close(fd);
+        return 0;
+    }
+    if (errno != EINPROGRESS && errno != EAGAIN && errno != EWOULDBLOCK) {
+        close(fd);
+        return -1;
+    }
+    struct pollfd pfd;
+    pfd.fd     = fd;
+    pfd.events = POLLOUT;
+    int pr = poll(&pfd, 1, timeout_ms);
+    int ok = 0;
+    if (pr > 0) {
+        int soerr = 0;
+        socklen_t slen = sizeof(soerr);
+        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &slen) == 0 &&
+            soerr == 0)
+            ok = 1;
+    }
+    close(fd);
+    return ok ? 0 : -1;
+}
+
+typedef struct {
+    uint32_t lo, hi;        /* inclusive IP range to probe (host order) */
+    int port;
+    volatile int *found;   /* set when any thread finds an open port    */
+    char *out_ip;          /* where to write the dotted-quad on success */
+    uint32_t own;          /* our own IP, to skip                       */
+} scan_arg_t;
+
+static void *scan_worker(void *arg) {
+    scan_arg_t *a = (scan_arg_t*)arg;
+    for (uint32_t ip = a->lo; ip <= a->hi; ip++) {
+        if (*(a->found)) break;
+        if (ip == a->own) continue;
+        if (connect_timeout(ip, a->port, SCAN_TIMEOUT_MS) == 0) {
+            *(a->found) = 1;
+            snprintf(a->out_ip, 64, "%u.%u.%u.%u",
+                     (unsigned)((ip >> 24) & 0xff),
+                     (unsigned)((ip >> 16) & 0xff),
+                     (unsigned)((ip >> 8) & 0xff),
+                     (unsigned)(ip & 0xff));
+        }
+    }
+    return NULL;
+}
+
+/* Sweep the /24 containing our own IP, probing base.1 .. base.254 for an
+ * open `port` (skipping .0/.255 and our own address). On success, writes
+ * the dotted-quad into out_ip (>=64 bytes) and returns 0; returns -1 if
+ * nothing is found. */
+static int scan_for_phone(int port, char *out_ip) {
+    uint32_t own = get_own_ip();
+    if (own == 0) {
+        gp_log("scan: could not determine own IP\n");
+        return -1;
+    }
+    uint32_t base = own & 0xffffff00u;
+    gp_log("scan: probing %u.%u.%u.1-254:%d\n",
+           (unsigned)((own >> 24) & 0xff),
+           (unsigned)((own >> 16) & 0xff),
+           (unsigned)((own >> 8) & 0xff),
+           (unsigned)(own & 0xff), port);
+    volatile int found = 0;
+    scan_arg_t args[SCAN_THREADS];
+    pthread_t th[SCAN_THREADS];
+    int created[SCAN_THREADS];
+    int idx = 0;
+    int per = 254 / SCAN_THREADS, rem = 254 % SCAN_THREADS;
+    for (int t = 0; t < SCAN_THREADS; t++) {
+        int count = per + (t < rem ? 1 : 0);
+        args[t].lo     = base + 1 + idx;
+        args[t].hi     = args[t].lo + count - 1;
+        args[t].port   = port;
+        args[t].found  = &found;
+        args[t].out_ip = out_ip;
+        args[t].own    = own;
+        idx += count;
+    }
+    for (int t = 0; t < SCAN_THREADS; t++) {
+        if (pthread_create(&th[t], NULL, scan_worker, &args[t]) == 0)
+            created[t] = 1;
+        else
+            scan_worker(&args[t]); /* run this chunk inline */
+    }
+    for (int t = 0; t < SCAN_THREADS; t++)
+        if (created[t]) pthread_join(th[t], NULL);
+    if (found) {
+        gp_log("scan: found phone at %s\n", out_ip);
+        return 0;
+    }
+    gp_log("scan: no phone found on :%d\n", port);
+    return -1;
+}
 
 /* ── TCP client: connect to the phone gamepad-bridge server ───────────── */
 /* One virtual DualSense (slot 0). Reconnects forever: connect every ~2 s,
  * stream 32-byte frames, parse -> inject, auto-reconnect on EOF/reset. */
 static void *tcp_client(void *arg) {
     (void)arg;
-    char ipbuf[80];
-    snprintf(ipbuf, sizeof(ipbuf), "%s:%d", g_phone_ip, g_phone_port);
-    gp_log("tcp: target %s\n", ipbuf);
+    char target[64];
+    int fail_count = 0;
+
+    /* Resolve the phone. A valid phone_ip in the config is the preferred
+     * target (tried first, instant). Otherwise scan the LAN for the phone
+     * port and keep re-scanning until it is found (self-heals DHCP moves
+     * and a stale pinned IP). */
+    if (g_ip_pref_valid) {
+        snprintf(target, sizeof(target), "%s", g_ip_pref);
+        gp_log("tcp: preferred target %s:%d\n", target, g_phone_port);
+    } else {
+        gp_log("tcp: no preferred phone_ip; scanning LAN for :%d\n",
+               g_phone_port);
+        while (scan_for_phone(g_phone_port, target) != 0)
+            link_down_sleep(10000);
+    }
 
     while (1) {
+        char ipbuf[80];
+        snprintf(ipbuf, sizeof(ipbuf), "%s:%d", target, g_phone_port);
+
         int sock = socket(AF_INET, SOCK_STREAM, 0);
         if (sock < 0) {
             gp_log("tcp: socket errno=%d (retry 2s)\n", errno);
@@ -272,19 +452,31 @@ static void *tcp_client(void *arg) {
         memset(&sin, 0, sizeof(sin));
         sin.sin_family = AF_INET;
         sin.sin_port   = htons((uint16_t)g_phone_port);
-        if (inet_pton(AF_INET, g_phone_ip, &sin.sin_addr) != 1) {
-            gp_log("tcp: bad phone_ip \"%s\" (retry 2s)\n", g_phone_ip);
+        if (inet_pton(AF_INET, target, &sin.sin_addr) != 1) {
+            gp_log("tcp: bad phone_ip \"%s\" (retry 2s)\n", target);
             close(sock);
             link_down_sleep(2000);
             continue;
         }
 
         if (connect(sock, (struct sockaddr*)&sin, sizeof(sin)) != 0) {
-            gp_log("tcp: connect errno=%d (retry 2s)\n", errno);
             close(sock);
-            link_down_sleep(2000);
+            fail_count++;
+            if (fail_count >= TCP_RESCAN_AFTER_FAILS) {
+                gp_log("tcp: %d connect failures to %s - re-scanning LAN\n",
+                       fail_count, target);
+                fail_count = 0;
+                gp_log("tcp: scanning LAN for :%d\n", g_phone_port);
+                while (scan_for_phone(g_phone_port, target) != 0)
+                    link_down_sleep(10000);
+            } else {
+                gp_log("tcp: connect errno=%d (retry 2s)\n", errno);
+                link_down_sleep(2000);
+            }
             continue;
         }
+
+        fail_count = 0;
         gp_log("tcp: CONNECTED to %s\n", ipbuf);
 
         /* Receive exactly PADFRAME_SIZE bytes per frame, then inject. */
