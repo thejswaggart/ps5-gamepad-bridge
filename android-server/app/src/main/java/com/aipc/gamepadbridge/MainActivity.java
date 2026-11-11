@@ -12,6 +12,8 @@ import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.WindowManager;
+import android.widget.Button;
+import android.widget.EditText;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -36,6 +38,13 @@ public class MainActivity extends Activity {
     private TextView tvClient;
     private TextView tvReadout;
     private ScrollView scrollView;
+    private TextView tvPs5;
+    private Button btnScan;
+    private Button btnDeploy;
+    private EditText etIp;
+    private EditText etPort;
+    // Last IP found by a network scan (deploy target when et_ip is blank).
+    private String foundIp;
     private final StringBuilder buffer = new StringBuilder();
     private int lineCount;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -72,6 +81,14 @@ public class MainActivity extends Activity {
         tvClient = findViewById(R.id.tv_client);
         tvReadout = findViewById(R.id.tv_readout);
         scrollView = findViewById(R.id.scroll);
+        tvPs5 = findViewById(R.id.tv_ps5);
+        btnScan = findViewById(R.id.btn_scan);
+        btnDeploy = findViewById(R.id.btn_deploy);
+        etIp = findViewById(R.id.et_ip);
+        etPort = findViewById(R.id.et_port);
+        etPort.setText("9021");
+        btnScan.setOnClickListener(v -> onScan());
+        btnDeploy.setOnClickListener(v -> onDeploy());
 
         String lanIp = findLanIp();
         tvLanIp.setText("LAN IP: " + lanIp);
@@ -282,6 +299,116 @@ public class MainActivity extends Activity {
         if ((sources & InputDevice.SOURCE_DPAD) != 0) return "dpad";
         if ((sources & InputDevice.SOURCE_KEYBOARD) != 0) return "keyboard";
         return "sources=0x" + Integer.toHexString(sources);
+    }
+
+
+    /** /24 segment base (first three octets) of the phone's LAN IPv4, or null. */
+    private String findSubnetBase() {
+        try {
+            Enumeration<NetworkInterface> ifs = NetworkInterface.getNetworkInterfaces();
+            while (ifs.hasMoreElements()) {
+                NetworkInterface ni = ifs.nextElement();
+                if (!ni.isUp() || ni.isLoopback()) continue;
+                java.util.List<InterfaceAddress> addrs = ni.getInterfaceAddresses();
+                for (InterfaceAddress ia : addrs) {
+                    InetAddress a = ia.getAddress();
+                    if (a instanceof Inet4Address && !a.isLoopbackAddress()) {
+                        String h = a.getHostAddress();
+                        return h.substring(0, h.lastIndexOf('.'));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "subnet", e);
+        }
+        return null;
+    }
+
+    /** Parsed port from et_port; logs and returns -1 on bad input. */
+    private int parsePort() {
+        try {
+            int p = Integer.parseInt(etPort.getText().toString().trim());
+            if (p < 1 || p > 65535) return -1;
+            return p;
+        } catch (Exception e) {
+            append("port: invalid (need 1-65535)");
+            return -1;
+        }
+    }
+
+    /** Sweep the local /24 for the ELF loader port (default 9021). */
+    private void onScan() {
+        int port = parsePort();
+        if (port < 0) return;
+        String base = findSubnetBase();
+        if (base == null) {
+            append("scan: no LAN IPv4 address — check WiFi");
+            return;
+        }
+        foundIp = null;
+        btnScan.setEnabled(false);
+        tvPs5.setText("SCANNING " + base + ".0/24 ...");
+        append("scan: " + base + ".1-" + base + ".254  port " + port);
+        new NetworkScanner(base, port, new NetworkScanner.Listener() {
+            @Override
+            public void onOpen(String ip, int p) {
+                append("OPEN " + ip + ":" + p);
+                if (foundIp == null) {
+                    foundIp = ip;
+                    tvPs5.setText("PS5: " + ip + ":" + p);
+                }
+            }
+
+            @Override
+            public void onDone(int openCount) {
+                btnScan.setEnabled(true);
+                if (foundIp == null) {
+                    tvPs5.setText("PS5: none found on port " + port);
+                    append("scan: done, 0 open");
+                } else {
+                    append("scan: done, " + openCount + " open");
+                }
+            }
+        }).start();
+    }
+
+    /** Stream the bundled payload to the ELF loader (nc-style). */
+    private void onDeploy() {
+        int port = parsePort();
+        if (port < 0) return;
+        String ip = etIp.getText().toString().trim();
+        if (ip.isEmpty()) {
+            if (foundIp != null) {
+                ip = foundIp;
+            } else {
+                append("deploy: no target — scan or enter IP");
+                return;
+            }
+        }
+        btnDeploy.setEnabled(false);
+        tvPs5.setText("DEPLOYING → " + ip + ":" + port);
+        append("deploy: " + ip + ":" + port);
+        final String fip = ip;
+        new Thread(() -> {
+            String result;
+            try {
+                byte[] payload = Ps5Deployer.loadPayload(this);
+                Ps5Deployer.deploy(fip, port, payload);
+                result = "OK " + payload.length + " bytes";
+            } catch (Exception e) {
+                result = "FAILED " + e;
+            }
+            final String r = result;
+            mainHandler.post(() -> {
+                btnDeploy.setEnabled(true);
+                if (r.startsWith("OK")) {
+                    tvPs5.setText("DEPLOYED → " + fip + ":" + port);
+                } else {
+                    tvPs5.setText("DEPLOY FAILED");
+                }
+                append("deploy: " + r);
+            });
+        }).start();
     }
 
     private void append(String line) {
