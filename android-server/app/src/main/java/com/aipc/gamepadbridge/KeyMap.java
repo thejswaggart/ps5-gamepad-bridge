@@ -34,6 +34,7 @@ public final class KeyMap {
             PadFrame.BTN_L2, PadFrame.BTN_R2, PadFrame.BTN_L1, PadFrame.BTN_R1,
             PadFrame.BTN_TRIANGLE, PadFrame.BTN_CIRCLE, PadFrame.BTN_CROSS,
             PadFrame.BTN_SQUARE, PadFrame.BTN_CREATE, PadFrame.BTN_SHARE,
+            PadFrame.BTN_TOUCHPAD,
     };
 
     public static String buttonName(int bit) {
@@ -55,6 +56,7 @@ public final class KeyMap {
             case PadFrame.BTN_SQUARE:   return "SQUARE";
             case PadFrame.BTN_CREATE:   return "CREATE (PS)";
             case PadFrame.BTN_SHARE:    return "SHARE";
+            case PadFrame.BTN_TOUCHPAD: return "TOUCHPAD";
             default:                    return "0x" + Integer.toHexString(bit);
         }
     }
