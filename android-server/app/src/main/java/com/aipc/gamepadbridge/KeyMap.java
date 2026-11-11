@@ -77,7 +77,7 @@ public final class KeyMap {
             { 22,  PadFrame.BTN_RIGHT },
             { 108, PadFrame.BTN_OPTIONS },
             { 109, PadFrame.BTN_SHARE },
-            { 110, PadFrame.BTN_CREATE },
+            { 110, PadFrame.BTN_TOUCHPAD },
     };
 
     private final HashMap<Integer, Integer> keyToBit = new HashMap<>();
