@@ -101,10 +101,11 @@ public class MappingActivity extends Activity {
             row.setTypeface(android.graphics.Typeface.MONOSPACE);
             row.setMinHeight(dp(56));
             row.setPadding(16, dp(10), 16, dp(10));
+            row.setBackgroundResource(R.drawable.row_box);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT);
-            lp.setMargins(8, 2, 8, 2);
+            lp.setMargins(8, 4, 8, 4);
             row.setLayoutParams(lp);
             row.setOnClickListener(v -> {
                 if (armedRow == row) {
@@ -142,8 +143,7 @@ public class MappingActivity extends Activity {
                 StringBuilder sb = new StringBuilder();
                 for (int i = 0; i < keys.size(); i++) {
                     if (i > 0) sb.append(", ");
-                    int k = keys.get(i);
-                    sb.append(KeyEvent.keyCodeToString(k)).append(" (").append(k).append(")");
+                    sb.append(keys.get(i));
                 }
                 rest = sb.toString();
             }
@@ -160,13 +160,13 @@ public class MappingActivity extends Activity {
         }
         armedBit = bit;
         armedRow = row;
-        row.setBackgroundColor(0xFFFFF59D);
+        row.setBackgroundResource(R.drawable.row_armed);
         row.setText(formatRow(bit, true));
     }
 
     private void disarm() {
         if (armedRow != null) {
-            armedRow.setBackgroundColor(0);
+            armedRow.setBackgroundResource(R.drawable.row_box);
             armedRow.setText(formatRow(armedBit, false));
         }
         armedBit = 0;
@@ -201,8 +201,7 @@ public class MappingActivity extends Activity {
             if (armedBit != 0 && DeviceProbe.isGamepadDevice(event.getDeviceId())) {
                 keyMap.bind(event.getKeyCode(), armedBit);
                 app.saveCurrent();
-                String who = KeyEvent.keyCodeToString(event.getKeyCode());
-                toast("MAPPED " + who + " -> " + KeyMap.buttonName(armedBit));
+                toast("MAPPED " + event.getKeyCode() + " -> " + KeyMap.buttonName(armedBit));
                 disarm();
                 refreshAll();
                 return true;
