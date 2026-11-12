@@ -71,16 +71,29 @@ non-zero. If the link drops, the phone stops on its own when `ttl` runs out.
 | 5   | 1  | `small` u8 light motor 0–255 |
 | 6   | 2  | `ttl_ms` u16 (0 = stop now) |
 
+**Where the PS5 gets rumble (`rumble_out.c`).** The payload reads its own
+virtual DualSense back with `scePadVirtualDeviceGetRemoteSetting`: when a game
+calls `scePadSetVibration`, the system records the motor levels in that
+buffer. Different games/ports write the levels to different offsets (one title
+used offset 4, another 22/24, another 6/7), so the payload takes the **max
+over the buffer's rumble region** (skipping the constant descriptor bytes),
+which rests at 0 and rises with any game's rumble. A value held unchanged for
+350 ms is treated as "effect ended" and forced to 0, because the buffer keeps
+the last value after a game stops. (This is the classic rumble motors only;
+DualSense *haptics*, as used in e.g. Astro Bot gameplay, are a separate
+high-fidelity channel not exposed here.)
+
 The phone vibrates the first connected controller that Android reports a
 motor for, or (if allowed on the Test controller screen) the phone itself.
-Android 9 has one motor per device, so both values become one strength, and
-it can only switch a controller's motor on or off. Weaker rumble is made by
-pulsing it: light is 60 ms on / 140 ms off, medium 100 ms on / 50 ms off,
-strong is steady (strength 24–99 / 100–179 / 180+). **Test rumble** on the
-Test controller screen plays all three. On the test phone (Android
-9, kernel 4.4) an Xbox Wireless Controller has no usable motor over Bluetooth
-or USB; a USB GameCube-style pad rumbles. **The PS5 payload doesn't send
-RumbleFrames yet**; `test_client.py <phone-ip> 8471 0 rumble` stands in for it.
+Android 9 has one motor per device and can only switch a controller's motor
+on or off, so weaker rumble is pulsed with long on-slices (light 200 ms on /
+80 ms off, medium 260/40, strong steady; a cheap motor needs long pulses to
+be felt at all). A pad with amplitude control instead gets a graded strength.
+**Test rumble** on the Test controller screen plays light/medium/full. On the
+test phone (Android 9, kernel 4.4) an Xbox Wireless Controller has no usable
+motor over Bluetooth or USB; a USB GameCube-style pad rumbles. For bench
+testing without a PS5, `test_client.py <phone-ip> 8471 0 rumble` sends
+RumbleFrames like the payload does.
 
 Shared contract: `ps5-client/padframe.h` (PS5) ↔
 `android-server/.../PadFrame.java` and `RumbleFrame.java` (phone). Keep them
@@ -196,6 +209,7 @@ ps5-gamepad-bridge/
 ├─ Makefile                          # top-level: android / ps5 / deploy
 ├─ ps5-client/                      # PS5 payload (x86-64 ELF)
 │  ├─ gc_main.c                     #   main: config, LAN scan, TCP client, VDI
+│  ├─ rumble_out.c / .h            #   reads game rumble, sends RumbleFrames back
 │  ├─ shellui_pad.c / .h           #   shell UI / pad glue
 │  ├─ gc_types.h                   #   SCE pad types
 │  ├─ padframe.h                   #   PadFrame + RumbleFrame wire contract (PS5 side)

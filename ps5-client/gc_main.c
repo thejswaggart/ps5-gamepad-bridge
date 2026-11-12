@@ -34,6 +34,7 @@
 #endif
 
 #include "shellui_pad.h"
+#include "rumble_out.h"
 #include "gc_types.h"
 #include "padframe.h"
 
@@ -478,6 +479,7 @@ static void *tcp_client(void *arg) {
 
         fail_count = 0;
         gp_log("tcp: CONNECTED to %s\n", ipbuf);
+        rumble_out_set_sock(sock);
 
         /* Receive exactly PADFRAME_SIZE bytes per frame, then inject. */
         uint8_t buf[PADFRAME_SIZE];
@@ -491,6 +493,7 @@ static void *tcp_client(void *arg) {
                     continue;
                 gp_log("tcp: EOF/reset (n=%d errno=%d) - reconnecting\n",
                        (int)n, n < 0 ? errno : 0);
+                rumble_out_set_sock(-1);
                 close(sock);
                 if (last_conn != 0) {
                     last_conn = 0;
@@ -526,6 +529,7 @@ static void *tcp_client(void *arg) {
                         g_slots[0].handle       = h;
                         g_slots[0].vdi_ready    = 1;
                         g_slots[0].inject_count = 0;
+                        rumble_out_set_handle(h);
                     } else {
                         gp_log("tcp: VDA create failed (retry next frame)\n");
                     }
@@ -608,6 +612,7 @@ static void delete_vda_for_slot(int slot) {
     g_slots[slot].handle       = -1;
     g_slots[slot].vdi_ready    = 0;
     g_slots[slot].inject_count = 0;
+    rumble_out_set_handle(-1);
 }
 
 /* ── Credentials ──────────────────────────────────────────────────────── */
@@ -655,6 +660,8 @@ int main(void) {
 
     ret=scePadInit(); gp_log("scePadInit: 0x%08x\n", ret);
     ret=scePadSetProcessPrivilege(1); gp_log("scePadSetProcessPrivilege: 0x%08x\n", ret);
+
+    rumble_out_start();
 
     /* Clean up any orphaned VDA devices */
     for (int dh=0; dh<64; dh++) {

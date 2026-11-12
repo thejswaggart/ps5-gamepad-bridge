@@ -24,17 +24,23 @@ public final class Rumbler {
     public static final int TARGET_PHONE = 2;
 
     /** With on/off-only motors, ignore rumble weaker than this (0-255). */
-    private static final int ON_OFF_THRESHOLD = 24;
+    // The PS5 motor values rest at 0, so any non-zero is real rumble. Keep
+    // this low so subtle effects (e.g. Wave Race's wave bounces, ~20/255)
+    // still produce a gentle pulse on an on/off motor, not silence.
+    private static final int ON_OFF_THRESHOLD = 5;
 
     /*
-     * Pulse levels for on/off motors: {on ms, off ms} per cycle. Small,
-     * cheap motors need ~50 ms to spin up, so each "on" slice is at least
-     * that long; light is a slow throb, medium a fast one.
+     * Pulse levels for on/off motors: {on ms, off ms} per cycle. Weak motors
+     * barely spin up on short bursts (a crash felt like "a couple
+     * revolutions"), so the "on" slices are long and the duty cycle high;
+     * anything strong runs continuously. Games also use different value
+     * ranges (one tops out near 63, another near 255), so the thresholds are
+     * low enough that a ~60 rumble still drives the motor hard.
      * Levels: 1 light, 2 medium, 3 strong (continuous).
      */
     private static final int LEVEL_OFF = 0, LEVEL_LIGHT = 1, LEVEL_MEDIUM = 2, LEVEL_STRONG = 3;
-    private static final int[][] PULSE = { null, {60, 140}, {100, 50}, null };
-    private static final int LIGHT_BELOW = 100, MEDIUM_BELOW = 180;
+    private static final int[][] PULSE = { null, {200, 80}, {260, 40}, null };
+    private static final int LIGHT_BELOW = 20, MEDIUM_BELOW = 55;
     /** Android 9's input vibrator accepts at most 100 pattern entries. */
     private static final int MAX_PATTERN = 100;
 
