@@ -5,6 +5,7 @@ import android.util.Log;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -26,9 +27,15 @@ public final class PadServer {
         void onStatus();
     }
 
+    /** Called on the reader thread for each RumbleFrame the PS5 sends. */
+    public interface RumbleListener {
+        void onRumble(int large, int small, int ttlMs);
+    }
+
     private final PadMapper mapper;
     private final PowerManager.WakeLock wakeLock;
     private volatile StatusListener listener;
+    private volatile RumbleListener rumbleListener;
 
     private volatile boolean running = false;
     private volatile boolean clientConnected = false;
@@ -49,6 +56,10 @@ public final class PadServer {
     private void notifyStatus() {
         StatusListener l = listener;
         if (l != null) l.onStatus();
+    }
+
+    public void setRumbleListener(RumbleListener l) {
+        this.rumbleListener = l;
     }
 
     public boolean isRunning() {
@@ -117,6 +128,8 @@ public final class PadServer {
                 clientIp = remoteIp(c);
                 Log.i(TAG, "client connected: " + clientIp);
                 notifyStatus();
+                Thread reader = new Thread(() -> readClient(c), "PadServer-rx");
+                reader.start();
                 try {
                     serveClient(c);
                 } finally {
@@ -124,6 +137,8 @@ public final class PadServer {
                     clientIp = "";
                     closeQuietly(c);
                     clientSocket = null;
+                    RumbleListener rl = rumbleListener;
+                    if (rl != null) rl.onRumble(0, 0, 0); // never leave a motor running
                     Log.i(TAG, "client disconnected");
                     notifyStatus();
                 }
@@ -165,6 +180,38 @@ public final class PadServer {
         } catch (InterruptedException e) {
             // stop()
         }
+    }
+
+    /**
+     * Read RumbleFrames from the PS5. Bytes that don't start a frame are
+     * skipped one at a time, so a stray byte can't desync the stream.
+     * Closing the socket (disconnect or stop) ends the loop.
+     */
+    private void readClient(Socket c) {
+        byte[] buf = new byte[RumbleFrame.SIZE];
+        int have = 0;
+        try {
+            InputStream in = c.getInputStream();
+            while (running) {
+                int n = in.read(buf, have, RumbleFrame.SIZE - have);
+                if (n < 0) break;
+                have += n;
+                if (have < RumbleFrame.SIZE) continue;
+                RumbleFrame f = RumbleFrame.decode(buf, 0);
+                if (f == null) {
+                    System.arraycopy(buf, 1, buf, 0, RumbleFrame.SIZE - 1);
+                    have = RumbleFrame.SIZE - 1;
+                    continue;
+                }
+                have = 0;
+                RumbleListener rl = rumbleListener;
+                if (rl != null) rl.onRumble(f.large, f.small, f.ttlMs);
+            }
+        } catch (IOException e) {
+            // socket closed
+        }
+        // The PS5 closed its side: drop the link so the writer notices too.
+        closeQuietly(c);
     }
 
     private static void encodeFrame(byte[] buf, PadState s, int seq) {

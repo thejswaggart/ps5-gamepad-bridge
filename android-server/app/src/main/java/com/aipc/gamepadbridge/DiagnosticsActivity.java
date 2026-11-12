@@ -131,8 +131,21 @@ public class DiagnosticsActivity extends PadActivity {
                 + "PS5             " + (server.isClientConnected() ? "connected from " + server.getClientIp() : "not connected") + "\n"
                 + "Controller      " + (pad == null ? "none" : pad) + "\n"
                 + "Mapping profile " + app.getCurrentProfileName() + "\n"
+                + "Rumble          " + rumbleText() + "\n"
                 + "ELF loader port " + app.getLoaderPort() + "\n"
                 + "Android         " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")";
+    }
+
+    private String rumbleText() {
+        Rumbler r = app.getRumbler();
+        String to;
+        if (!r.isEnabled()) to = "off";
+        else if (r.getTargetKind() == Rumbler.TARGET_CONTROLLER) to = "controller";
+        else if (r.getTargetKind() == Rumbler.TARGET_PHONE) to = "phone";
+        else to = "nowhere (controller has no motor)";
+        long ago = r.msSinceLastFrame();
+        return to + (ago < 0 ? ", nothing from PS5 yet"
+                : ", last " + r.getLastLarge() + "/" + r.getLastSmall() + " " + (ago / 1000) + "s ago");
     }
 
     private void showLog() {

@@ -88,3 +88,31 @@ _Static_assert(sizeof(PadFrame) == PADFRAME_SIZE,
 
 /* Center value for the 0-255 stick/trigger encoding. */
 #define PADFRAME_CENTER 128
+
+/*
+ * RumbleFrame — 8 bytes, little-endian, sent the OTHER way: PS5 -> phone,
+ * on the same TCP connection. The phone vibrates the controller (or itself).
+ *
+ *   off  sz  field
+ *   0    4   magic   = RUMBLEFRAME_MAGIC
+ *   4    1   large   (low-frequency / heavy motor, 0-255)
+ *   5    1   small   (high-frequency / light motor, 0-255)
+ *   6    2   ttl_ms  (stop after this many ms unless refreshed; 0 = stop now)
+ *
+ * Send one whenever the game's motor values change, and repeat it about
+ * every ttl/2 while they are non-zero. If the link drops, the phone stops
+ * on its own when ttl runs out. Older phone builds ignore these bytes.
+ */
+#define RUMBLEFRAME_MAGIC  0x4C424D52u   /* "RMBL" read as a little-endian u32 */
+#define RUMBLEFRAME_SIZE   8u
+#define RUMBLE_TTL_DEFAULT_MS 500u
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint8_t  large;
+    uint8_t  small;
+    uint16_t ttl_ms;
+} RumbleFrame;
+
+_Static_assert(sizeof(RumbleFrame) == RUMBLEFRAME_SIZE,
+               "RumbleFrame must be exactly 8 bytes");

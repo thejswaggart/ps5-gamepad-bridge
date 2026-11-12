@@ -50,6 +50,8 @@ public class GamepadBridgeApp extends Application {
     private static final String PREF_LAST_IP = "last_ps5_ip";
     private static final String PREF_MANUAL_IP = "manual_ps5_ip";
     private static final String PREF_PORT = "loader_port";
+    private static final String PREF_RUMBLE = "rumble_enabled";
+    private static final String PREF_RUMBLE_PHONE = "rumble_phone_fallback";
 
     // Axes fed to the mapper: sticks, D-pad hat, Xbox analog triggers.
     private static final int[] MAP_AXES = {
@@ -67,6 +69,7 @@ public class GamepadBridgeApp extends Application {
     private KeyMap keyMap;
     private PadMapper mapper;
     private PadServer server;
+    private Rumbler rumbler;
     private String currentProfileKey = "default";
     private String currentProfileName = "default";
 
@@ -98,6 +101,11 @@ public class GamepadBridgeApp extends Application {
         keyMap = new KeyMap();
         mapper = new PadMapper(keyMap);
         server = new PadServer(mapper, wl, () -> main.post(this::onServerStatus));
+        rumbler = new Rumbler(this);
+        rumbler.setEnabled(prefs.getBoolean(PREF_RUMBLE, true));
+        rumbler.setPhoneFallback(prefs.getBoolean(PREF_RUMBLE_PHONE, false));
+        rumbler.selectFor(-1);
+        server.setRumbleListener(rumbler::onRumble);
         server.start();
 
         InputManager im = (InputManager) getSystemService(Context.INPUT_SERVICE);
@@ -117,6 +125,7 @@ public class GamepadBridgeApp extends Application {
                 String name = gamepads.remove(id);
                 if (name != null) {
                     AppLog.i("Controller disconnected: " + name);
+                    selectRumbleTarget(false);
                     mapper.setPadConnected(!gamepads.isEmpty());
                     notifyStatus();
                 }
@@ -144,11 +153,13 @@ public class GamepadBridgeApp extends Application {
             gamepads.put(id, name);
             AppLog.i("Controller connected: " + name);
             loadProfileFor(name);
+            selectRumbleTarget(true);
             mapper.setPadConnected(true);
             notifyStatus();
         } else if (gamepads.containsKey(id)) {
             String name = gamepads.remove(id);
             AppLog.i("Controller disconnected: " + name);
+            selectRumbleTarget(false);
             mapper.setPadConnected(!gamepads.isEmpty());
             notifyStatus();
         }
@@ -158,6 +169,58 @@ public class GamepadBridgeApp extends Application {
     public String getControllerName() {
         for (String n : gamepads.values()) return n;
         return null;
+    }
+
+    /** Id of the first connected controller, or -1. */
+    public int getControllerId() {
+        for (int id : gamepads.keySet()) return id;
+        return -1;
+    }
+
+    // ---- rumble ----
+
+    /**
+     * Rumble goes to the first connected controller that has a motor, so a
+     * USB pad still rumbles while a motor-less Bluetooth pad is also paired.
+     */
+    private void selectRumbleTarget(boolean log) {
+        int pick = getControllerId();
+        String pickName = getControllerName();
+        for (Map.Entry<Integer, String> e : gamepads.entrySet()) {
+            InputDevice d = InputDevice.getDevice(e.getKey());
+            if (d != null && d.getVibrator().hasVibrator()) {
+                pick = e.getKey();
+                pickName = e.getValue();
+                break;
+            }
+        }
+        rumbler.selectFor(pick);
+        rumbleName = rumbler.controllerCanRumble() ? pickName : null;
+        if (log && pick >= 0) {
+            AppLog.i(rumbler.controllerCanRumble()
+                    ? "Rumble goes to " + pickName
+                    : "Android reports no rumble motor for " + pickName);
+        }
+    }
+
+    private volatile String rumbleName;
+
+    /** Name of the controller that rumbles, or null if none can. */
+    public String getRumbleControllerName() { return rumbleName; }
+
+    public Rumbler getRumbler() { return rumbler; }
+
+    public void setRumbleEnabled(boolean v) {
+        prefs.edit().putBoolean(PREF_RUMBLE, v).apply();
+        rumbler.setEnabled(v);
+        notifyStatus();
+    }
+
+    public void setRumblePhoneFallback(boolean v) {
+        prefs.edit().putBoolean(PREF_RUMBLE_PHONE, v).apply();
+        rumbler.setPhoneFallback(v);
+        selectRumbleTarget(false);
+        notifyStatus();
     }
 
     // ---- profiles ----

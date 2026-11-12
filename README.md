@@ -58,8 +58,30 @@ and they land on the PS5.
 | 22  | 8  | `ts` u64 ms |
 | 30  | 2  | `pad` = 0 |
 
+### `RumbleFrame` (8 bytes, little-endian, PS5 → phone)
+
+The same connection carries rumble the other way. The PS5 sends one when the
+game's motor values change, and repeats it about every `ttl/2` while they are
+non-zero. If the link drops, the phone stops on its own when `ttl` runs out.
+
+| off | sz | field |
+|-----|----|-------|
+| 0   | 4  | `magic` = `0x4C424D52` ("RMBL") |
+| 4   | 1  | `large` u8 heavy motor 0–255 |
+| 5   | 1  | `small` u8 light motor 0–255 |
+| 6   | 2  | `ttl_ms` u16 (0 = stop now) |
+
+The phone vibrates the first connected controller that Android reports a
+motor for, or (if allowed on the Test controller screen) the phone itself.
+Android 9 has one motor per device, so both values become one strength, and
+many controller drivers only switch it on or off. On the test phone (Android
+9, kernel 4.4) an Xbox Wireless Controller has no usable motor over Bluetooth
+or USB; a USB GameCube-style pad rumbles. **The PS5 payload doesn't send
+RumbleFrames yet**; `test_client.py <phone-ip> 8471 0 rumble` stands in for it.
+
 Shared contract: `ps5-client/padframe.h` (PS5) ↔
-`android-server/.../PadFrame.java` (phone). Keep them in lockstep.
+`android-server/.../PadFrame.java` and `RumbleFrame.java` (phone). Keep them
+in lockstep.
 
 ## Prerequisites
 
@@ -173,9 +195,9 @@ ps5-gamepad-bridge/
 │  ├─ gc_main.c                     #   main: config, LAN scan, TCP client, VDI
 │  ├─ shellui_pad.c / .h           #   shell UI / pad glue
 │  ├─ gc_types.h                   #   SCE pad types
-│  ├─ padframe.h                   #   PadFrame wire contract (PS5 side)
+│  ├─ padframe.h                   #   PadFrame + RumbleFrame wire contract (PS5 side)
 │  ├─ fake_phone.py                #   isolated test: fake phone server
-│  └─ test_client.py               #   test client
+│  └─ test_client.py               #   fake PS5: reads frames, can send rumble
 └─ android-server/                  # "Gamepad Bridge" Android app
    └─ app/src/main/java/com/aipc/gamepadbridge/
       ├─ GamepadBridgeApp.java      #   Application: server, controller tracking,
@@ -183,13 +205,14 @@ ps5-gamepad-bridge/
       ├─ PadActivity.java           #   base screen: forwards pad input to the mapper
       ├─ MainActivity.java          #   home: 3-step setup checklist
       ├─ MappingActivity.java       #   button mapping (per-controller profiles)
-      ├─ TestActivity.java / PadView.java  # live controller test drawing
+      ├─ TestActivity.java / PadView.java  # live controller test + rumble settings
       ├─ PlayModeActivity.java      #   dimmed, touch-locked play screen
       ├─ DiagnosticsActivity.java   #   addresses, raw values, event log
       ├─ AppLog.java                #   in-app event log
       ├─ PadServer.java             #   TCP server :8471, 60 Hz stream
       ├─ PadMapper.java / KeyMap.java  # keycodes -> PS5 bits, user mapping
       ├─ PadFrame.java              #   32-byte wire format (phone side)
+      ├─ RumbleFrame.java / Rumbler.java  # rumble from the PS5 -> pad or phone motor
       ├─ PadState.java              #   canonical pad state
       ├─ NetUtil.java               #   LAN address + /24 scan for :9021
       └─ Ps5Deployer.java           #   nc-style ELF deploy
