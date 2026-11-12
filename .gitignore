@@ -1,0 +1,15 @@
+# Build artifacts — reproducible via `make` / `make android`.
+
+# PS5 payload (built by ps5-client/Makefile, copied into the app's assets)
+ps5-client/*.elf
+ps5-client/*.o
+android-server/app/src/main/assets/ghostpad-net.elf
+
+# Android build outputs
+android-server/.gradle/
+android-server/build/
+android-server/app/build/
+android-server/local.properties
+
+# Logs / scratch
+*.log
