@@ -134,6 +134,7 @@ public final class PadServer {
         } finally {
             closeQuietly(ss);
             running = false;
+            notifyStatus(); // report the final stopped state
         }
     }
 

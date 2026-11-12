@@ -1,143 +1,175 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical">
-
-    <TextView
-        android:id="@+id/tv_device"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="No controllers yet"
-        android:textStyle="bold"
-        android:padding="8dp" />
+    android:layout_height="match_parent">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal">
+        android:orientation="vertical"
+        android:padding="16dp">
 
         <TextView
-            android:id="@+id/tv_lan_ip"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:text="LAN IP: ?" />
-
-        <TextView
-            android:id="@+id/tv_server"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="end"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:text="SERVER: ?" />
-    </LinearLayout>
-
-    <TextView
-        android:id="@+id/tv_client"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:paddingBottom="4dp"
-        android:text="CLIENT: waiting..." />
-
-    <TextView
-        android:id="@+id/tv_readout"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:fontFamily="monospace"
-        android:textSize="12sp"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:paddingBottom="4dp"
-        android:text="buttons=0x00000  L(128,128)  R(128,128)  L2=000 R2=000" />
-
-    <Button
-        android:id="@+id/btn_mapping"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="MAPPING" />
-
-    <TextView
-        android:id="@+id/tv_ps5"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:textStyle="bold"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:text="PS5: not found" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:paddingBottom="4dp">
-
-        <Button
-            android:id="@+id/btn_scan"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="SCAN NETWORK" />
-
-        <Button
-            android:id="@+id/btn_deploy"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="8dp"
-            android:text="DEPLOY" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:paddingBottom="8dp">
-
-        <EditText
-            android:id="@+id/et_ip"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:hint="PS5 IP (blank = scan result)"
-            android:inputType="text"
-            android:textSize="12sp" />
-
-        <EditText
-            android:id="@+id/et_port"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="8dp"
-            android:hint="9021"
-            android:inputType="number"
-            android:textSize="12sp" />
-    </LinearLayout>
-
-    <ScrollView
-        android:id="@+id/scroll"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1">
-
-        <TextView
-            android:id="@+id/tv_log"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:textSize="12sp"
-            android:padding="8dp"
-            android:text="" />
-    </ScrollView>
-</LinearLayout>
+            android:layout_marginBottom="12dp"
+            android:text="Use a controller connected to this phone as a PS5 controller over Wi-Fi."
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/card_bg"
+            android:orientation="vertical"
+            android:paddingEnd="8dp"
+            android:paddingStart="16dp">
+
+            <include
+                android:id="@+id/step_controller"
+                layout="@layout/step_row" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginStart="44dp"
+                android:background="@color/border" />
+
+            <include
+                android:id="@+id/step_payload"
+                layout="@layout/step_row" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginStart="44dp"
+                android:background="@color/border" />
+
+            <include
+                android:id="@+id/step_link"
+                layout="@layout/step_row" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/banner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/banner_ready"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Ready to play"
+                android:textColor="@color/success"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Keep this app open while you play. The PS5 stops getting input if you switch apps or the screen turns off. Play mode dims the screen to save battery."
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btn_play"
+                style="@style/Button.Primary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/btn_primary"
+                android:stateListAnimator="@null"
+                android:text="Start Play mode"
+                android:textColor="@color/bg" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/nav_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/card_bg"
+            android:orientation="vertical">
+
+            <include
+                android:id="@+id/btn_mapping"
+                layout="@layout/nav_row" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginStart="16dp"
+                android:background="@color/border" />
+
+            <include
+                android:id="@+id/btn_test"
+                layout="@layout/nav_row" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_advanced_toggle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="?android:attr/selectableItemBackground"
+            android:minHeight="48dp"
+            android:gravity="center_vertical"
+            android:text="▸  Advanced"
+            android:textColor="@color/text_secondary"
+            android:textSize="15sp" />
+
+        <LinearLayout
+            android:id="@+id/advanced"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/card_bg"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="PS5 address"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <EditText
+                android:id="@+id/et_ip"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Find automatically"
+                android:inputType="text"
+                android:digits="0123456789."
+                android:singleLine="true" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="ELF loader port on the PS5"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <EditText
+                android:id="@+id/et_port"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:singleLine="true" />
+
+            <TextView
+                android:id="@+id/tv_phone_addr"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

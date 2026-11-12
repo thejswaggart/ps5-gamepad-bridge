@@ -4,75 +4,78 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:paddingTop="8dp">
-
-        <Button
-            android:id="@+id/btn_main"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="MAIN" />
-
-        <Button
-            android:id="@+id/btn_reset"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="8dp"
-            android:text="RESET TO DEFAULTS" />
-    </LinearLayout>
-
-    <CheckBox
-        android:id="@+id/cb_trig"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:text="Treat L2/R2 as buttons (no pressure)" />
-
-    <TextView
-        android:id="@+id/tv_hint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:fontFamily="monospace"
-        android:textSize="12sp"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:text="TAP a row, then PRESS ANY BUTTON on the pad.\nLong-press a row to unmap it. ESC or CANCEL cancels." />
-
-    <TextView
-        android:id="@+id/tv_profile"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:fontFamily="monospace"
-        android:textSize="12sp"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:text="PROFILE: (loading...)" />
-
     <ScrollView
-        android:id="@+id/scroll_rows"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1">
 
         <LinearLayout
-            android:id="@+id/rows"
+            android:id="@+id/content"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical" />
+            android:orientation="vertical"
+            android:paddingBottom="16dp"
+            android:paddingEnd="16dp"
+            android:paddingStart="16dp"
+            android:paddingTop="12dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Tap a PS5 button, then press the button on your controller you want to use for it. Long-press a row to clear it. Changes are saved for this controller."
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp" />
+
+            <Switch
+                android:id="@+id/sw_digital_triggers"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:minHeight="48dp"
+                android:text="Digital triggers"
+                android:textSize="16sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Turn on if your controller's triggers are plain buttons with no pressure. Then you can remap L2 and R2."
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <LinearLayout
+                android:id="@+id/rows"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </LinearLayout>
     </ScrollView>
 
-    <Button
-        android:id="@+id/btn_cancel"
+    <LinearLayout
+        android:id="@+id/capture_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingStart="8dp"
+        android:background="@color/warning_bg"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
         android:paddingEnd="8dp"
-        android:text="CANCEL CAPTURE" />
+        android:paddingStart="16dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tv_capture"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:paddingBottom="12dp"
+            android:paddingTop="12dp"
+            android:textColor="@color/warning"
+            android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/btn_cancel"
+            style="@style/Button.Text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Cancel" />
+    </LinearLayout>
 </LinearLayout>

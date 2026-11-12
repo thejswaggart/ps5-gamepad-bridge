@@ -26,8 +26,12 @@ Two halves talk over a single TCP connection:
 
 - **Phone = the gamepad (TCP *server*).** The `Gamepad Bridge` app reads an
   external gamepad (USB/Bluetooth) via `PadMapper`, and `PadServer` streams a
-  32-byte `PadFrame` at ~60 Hz (16 ms) to `0.0.0.0:8471`. It holds a
-  `PARTIAL_WAKE_LOCK` so the socket stays alive with the screen off.
+  32-byte `PadFrame` at ~60 Hz (16 ms) to `0.0.0.0:8471`.
+  **The app must stay open with the screen on:** Android only delivers
+  gamepad events to the focused window, so input stops if you switch apps,
+  lock the phone, or let the screen turn off. (The `PARTIAL_WAKE_LOCK` keeps
+  the socket alive, but no input arrives.) Use **Play mode** to dim the
+  screen to near-black while you play.
 - **PS5 = the controller injector (TCP *client*).** The `ghostpad-net.elf`
   payload creates a **virtual DualSense** and injects the received input with
   `scePadVirtualDeviceInsertData` (the "Ghostpad VDI path"). It
@@ -108,8 +112,9 @@ nc -w 8 <ps5-ip> 9021 < ps5-client/ghostpad-net.elf
 # or:  make deploy        (PS5_HOST defaults to "PS5")
 ```
 
-Or from the app: open **Gamepad Bridge**, tap **DEPLOY** — it scans the `/24`
-for an open `:9021` (`NetworkScanner`) and streams the bundled
+Or from the app: open **Gamepad Bridge** and tap **Send** on step 2. It tries
+the address under **Advanced** (if set), then the last PS5 that worked, then
+sweeps the `/24` for an open `:9021` (`NetUtil`), and streams the bundled
 `ghostpad-net.elf` asset.
 
 > Deploying **replaces** whatever the PS5 is currently running. Confirm what's
@@ -119,16 +124,18 @@ for an open `:9021` (`NetworkScanner`) and streams the bundled
 
 1. **PS5:** jailbreak, start the ELF loader (pldmgr) so it's listening on `:9021`.
 2. **Build:** `make android` (or just `make ps5`).
-3. **Deploy the payload** to the PS5 (app **DEPLOY**, `make deploy`, or `nc` above).
-4. **Phone:** plug the external gamepad into the phone, open **Gamepad Bridge**,
-   start the server (listens on `0.0.0.0:8471`). You can lock the screen —
-   the wakelock keeps it streaming.
+3. **Deploy the payload** to the PS5 (app **Send**, `make deploy`, or `nc` above).
+4. **Phone:** plug the external gamepad into the phone and open **Gamepad
+   Bridge** (it listens on `0.0.0.0:8471` as soon as it starts). Keep the app
+   open with the screen on; **Play mode** dims it to save battery.
 5. **Auto-connect:** the PS5 payload scans the LAN, finds the phone's `:8471`,
    and connects.
 6. **Play:** the phone's pad now drives the PS5.
 
 **Verify it connected**
-- Phone app header flips to `CLIENT: <ps5-ip>`.
+- Step 3 on the phone's home screen shows **PS5 connected**, and a
+  **Ready to play** banner appears. **⋮ → Diagnostics** shows the PS5's IP
+  and the event log.
 - PS5 log `/data/ghostpad/gc_status.log` shows
   `scan: found phone at <ip>` then `tcp: CONNECTED`.
 
@@ -171,14 +178,21 @@ ps5-gamepad-bridge/
 │  └─ test_client.py               #   test client
 └─ android-server/                  # "Gamepad Bridge" Android app
    └─ app/src/main/java/com/aipc/gamepadbridge/
-      ├─ GamepadBridgeApp.java      #   Application (keep-screen-on, etc.)
-      ├─ PadServer.java             #   TCP server :8471, 60 Hz stream, wakelock
-      ├─ PadMapper.java             #   external-pad keycodes -> PS5 bits
+      ├─ GamepadBridgeApp.java      #   Application: server, controller tracking,
+      │                             #   input routing, payload sending
+      ├─ PadActivity.java           #   base screen: forwards pad input to the mapper
+      ├─ MainActivity.java          #   home: 3-step setup checklist
+      ├─ MappingActivity.java       #   button mapping (per-controller profiles)
+      ├─ TestActivity.java / PadView.java  # live controller test drawing
+      ├─ PlayModeActivity.java      #   dimmed, touch-locked play screen
+      ├─ DiagnosticsActivity.java   #   addresses, raw values, event log
+      ├─ AppLog.java                #   in-app event log
+      ├─ PadServer.java             #   TCP server :8471, 60 Hz stream
+      ├─ PadMapper.java / KeyMap.java  # keycodes -> PS5 bits, user mapping
       ├─ PadFrame.java              #   32-byte wire format (phone side)
       ├─ PadState.java              #   canonical pad state
-      ├─ NetworkScanner.java        #   /24 scan for the ELF loader :9021
-      ├─ Ps5Deployer.java           #   nc-style ELF deploy
-      └─ MainActivity.java          #   UI, device tracking, deploy button
+      ├─ NetUtil.java               #   LAN address + /24 scan for :9021
+      └─ Ps5Deployer.java           #   nc-style ELF deploy
 ```
 
 ## Credits & acknowledgements

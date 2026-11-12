@@ -1,471 +1,273 @@
 package com.aipc.gamepadbridge;
 
-import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
-import android.content.Context;
-import android.hardware.input.InputManager;
-import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
-import android.util.Log;
-import android.view.InputDevice;
-import android.view.KeyEvent;
-import android.view.MotionEvent;
-import android.view.WindowManager;
+import android.provider.Settings;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.ScrollView;
 import android.widget.TextView;
 
-import java.net.Inet4Address;
-import java.net.InterfaceAddress;
-import java.net.InetAddress;
-import java.net.NetworkInterface;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Enumeration;
-import java.util.Locale;
+import java.util.function.Consumer;
 
-public class MainActivity extends Activity {
+/**
+ * Home screen: a three-step setup checklist (controller, payload on PS5,
+ * PS5 connected), then a "Ready to play" banner once everything is up.
+ */
+public class MainActivity extends PadActivity {
 
-    private static final String TAG = "GamepadBridge";
-    private static final int MAX_LINES = 200;
+    private static final int MENU_TEST = 1;
+    private static final int MENU_DIAGNOSTICS = 2;
 
-    private TextView tvLog;
-    private TextView tvDevice;
-    private TextView tvLanIp;
-    private TextView tvServer;
-    private TextView tvClient;
-    private TextView tvReadout;
-    private ScrollView scrollView;
-    private TextView tvPs5;
-    private Button btnScan;
-    private Button btnDeploy;
-    private Button btnMapping;
+    private static final int ST_PENDING = 0;
+    private static final int ST_WORKING = 1;
+    private static final int ST_DONE = 2;
+    private static final int ST_ERROR = 3;
+
+    private View stepController;
+    private View stepPayload;
+    private View stepLink;
+    private View banner;
+    private View advancedBox;
+    private TextView tvAdvancedToggle;
+    private TextView tvPhoneAddr;
     private EditText etIp;
     private EditText etPort;
-    // Last IP found by a network scan (deploy target when et_ip is blank).
-    private String foundIp;
-    private final StringBuilder buffer = new StringBuilder();
-    private int lineCount;
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
-
-    private PadMapper mapper;
-    private PadServer server;
-    private InputManager inputManager;
-    private InputManager.InputDeviceListener deviceListener;
-    private final PadState readoutState = new PadState();
-    // Gamepad device ids currently connected (driven by add/remove events).
-    private final java.util.Set<Integer> connectedGamepads = new java.util.HashSet<>();
-
-    // Axes we feed to the mapper: sticks + Xbox analog triggers.
-    private static final int[] MAP_AXES = {
-            MotionEvent.AXIS_X,     // 0 left x
-            MotionEvent.AXIS_Y,     // 1 left y
-            MotionEvent.AXIS_Z,     // 2 right x
-            MotionEvent.AXIS_RZ,   // 5 right y
-            MotionEvent.AXIS_HAT_X,  // 3 D-pad x
-            MotionEvent.AXIS_HAT_Y,  // 4 D-pad y
-            MotionEvent.AXIS_GAS,   // 10 Xbox L2
-            MotionEvent.AXIS_BRAKE // 11 Xbox R2
-    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        tvLog = findViewById(R.id.tv_log);
-        tvDevice = findViewById(R.id.tv_device);
-        tvLanIp = findViewById(R.id.tv_lan_ip);
-        tvServer = findViewById(R.id.tv_server);
-        tvClient = findViewById(R.id.tv_client);
-        tvReadout = findViewById(R.id.tv_readout);
-        scrollView = findViewById(R.id.scroll);
-        tvPs5 = findViewById(R.id.tv_ps5);
-        btnScan = findViewById(R.id.btn_scan);
-        btnDeploy = findViewById(R.id.btn_deploy);
+
+        stepController = findViewById(R.id.step_controller);
+        stepPayload = findViewById(R.id.step_payload);
+        stepLink = findViewById(R.id.step_link);
+        banner = findViewById(R.id.banner);
+        advancedBox = findViewById(R.id.advanced);
+        tvAdvancedToggle = findViewById(R.id.tv_advanced_toggle);
+        tvPhoneAddr = findViewById(R.id.tv_phone_addr);
         etIp = findViewById(R.id.et_ip);
         etPort = findViewById(R.id.et_port);
-        etPort.setText("9021");
-        btnMapping = findViewById(R.id.btn_mapping);
-        btnMapping.setOnClickListener(v ->
-                startActivity(new Intent(this, MappingActivity.class)));
-        btnScan.setOnClickListener(v -> onScan());
-        btnDeploy.setOnClickListener(v -> onDeploy());
 
-        String lanIp = findLanIp();
-        tvLanIp.setText("LAN IP: " + lanIp);
+        findViewById(R.id.btn_play).setOnClickListener(v -> open(PlayModeActivity.class));
+        setupNavRow(R.id.btn_mapping, "Button mapping",
+                "Choose which controller button does what", MappingActivity.class);
+        setupNavRow(R.id.btn_test, "Test controller",
+                "See what your PS5 receives", TestActivity.class);
+        // Keep the row ripples inside the card's rounded corners.
+        findViewById(R.id.nav_card).setClipToOutline(true);
+        tvAdvancedToggle.setOnClickListener(v -> toggleAdvanced());
 
-        GamepadBridgeApp app = (GamepadBridgeApp) getApplication();
-        mapper = app.getMapper();
-        server = app.getServer();
-        server.setListener(() -> mainHandler.post(this::refreshStatus));
-
-        append("Gamepad Bridge started (Android " + Build.VERSION.RELEASE
-                + " / API " + Build.VERSION.SDK_INT + ")");
-        append("PS5 connect to: " + lanIp + ":" + PadServer.PORT);
-
-        // Live connect / disconnect tracking.
-        inputManager = (InputManager) getSystemService(Context.INPUT_SERVICE);
-        deviceListener = new InputManager.InputDeviceListener() {
-            @Override
-            public void onInputDeviceAdded(int id) {
-                onDeviceEvent(id, "CONNECTED");
+        etIp.setText(app.getManualIp());
+        etPort.setText(String.valueOf(app.getLoaderPort()));
+        etIp.addTextChangedListener(new Watcher(s -> app.setManualIp(s.trim())));
+        etPort.addTextChangedListener(new Watcher(s -> {
+            int p = parsePort(s);
+            if (p > 0) {
+                app.setLoaderPort(p);
+                etPort.setError(null);
+            } else {
+                etPort.setError("Use a number from 1 to 65535");
             }
-
-            @Override
-            public void onInputDeviceChanged(int id) {
-                onDeviceEvent(id, "CHANGED");
-            }
-
-            @Override
-            public void onInputDeviceRemoved(int id) {
-                onDeviceEvent(id, "DISCONNECTED");
-            }
-        };
-        inputManager.registerInputDeviceListener(deviceListener, mainHandler);
-        refreshDeviceHeader();
-        seedConnectedGamepads(); // covers "pad already connected at app launch"
-        String sname = firstConnectedGamepadName();
-        if (sname != null) app.onGamepadConnected(sname);
-
-        // Live readout @10Hz.
-        mainHandler.postDelayed(readoutTick, 100);
+        }));
+        // Open Advanced if the user already set something there.
+        if (!app.getManualIp().isEmpty()
+                || app.getLoaderPort() != GamepadBridgeApp.DEFAULT_LOADER_PORT) {
+            toggleAdvanced();
+        }
     }
 
     @Override
-    protected void onDestroy() {
-        mainHandler.removeCallbacks(readoutTick);
-        if (inputManager != null && deviceListener != null) {
-            inputManager.unregisterInputDeviceListener(deviceListener);
+    protected void onStatusChanged() {
+        render();
+    }
+
+    private void render() {
+        String pad = app.getControllerName();
+        PadServer server = app.getServer();
+        boolean linked = server.isClientConnected();
+        int send = app.getSendState();
+        String sendIp = app.getSendIp();
+
+        // Step 1: controller
+        if (pad != null) {
+            setStep(stepController, ST_DONE, "1", "Controller connected", pad,
+                    "Test", v -> open(TestActivity.class));
+        } else {
+            setStep(stepController, ST_PENDING, "1", "Connect a controller",
+                    "Plug it into this phone by USB, or pair it over Bluetooth.",
+                    "Bluetooth", v -> startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)));
         }
-        super.onDestroy();
-    }
 
-    private final Runnable readoutTick = new Runnable() {
-        @Override
-        public void run() {
-            if (isFinishing()) return;
-            mapper.getState(readoutState);
-            tvReadout.setText(formatReadout(readoutState));
-            mainHandler.postDelayed(this, 100);
-        }
-    };
-
-    private static String formatReadout(PadState s) {
-        return String.format(Locale.US,
-                "buttons=0x%05X  L(%03d,%03d)  R(%03d,%03d)  L2=%03d R2=%03d",
-                s.buttons, s.lx, s.ly, s.rx, s.ry, s.l2, s.r2);
-    }
-
-    private void refreshStatus() {
-        tvServer.setText(server.isRunning() ? "SERVER: UP" : "SERVER: down");
-        tvClient.setText(server.isClientConnected()
-                ? "CLIENT: " + server.getClientIp()
-                : "CLIENT: waiting...");
-    }
-
-    private String findLanIp() {
-        try {
-            Enumeration<NetworkInterface> ifs = NetworkInterface.getNetworkInterfaces();
-            while (ifs.hasMoreElements()) {
-                NetworkInterface ni = ifs.nextElement();
-                if (!ni.isUp() || ni.isLoopback()) continue;
-                java.util.List<InterfaceAddress> addrs = ni.getInterfaceAddresses();
-                for (InterfaceAddress ia : addrs) {
-                    InetAddress a = ia.getAddress();
-                    if (a instanceof Inet4Address && !a.isLoopbackAddress()) {
-                        return a.getHostAddress();
-                    }
+        // Step 2: payload on the PS5
+        switch (send) {
+            case GamepadBridgeApp.SEND_SEARCHING:
+                setStep(stepPayload, ST_WORKING, "2", "Looking for your PS5…",
+                        "Searching your network for the ELF loader.", null, null);
+                break;
+            case GamepadBridgeApp.SEND_SENDING:
+                setStep(stepPayload, ST_WORKING, "2", "Sending GhostPad to your PS5…",
+                        "PS5 at " + sendIp, null, null);
+                break;
+            case GamepadBridgeApp.SEND_FAILED:
+                setStep(stepPayload, ST_ERROR, "2", "Couldn't send to your PS5",
+                        app.getSendDetail(), "Try again", v -> confirmSend());
+                break;
+            case GamepadBridgeApp.SEND_DONE:
+                setStep(stepPayload, ST_DONE, "2", "GhostPad sent to your PS5",
+                        "PS5 at " + sendIp, "Resend", v -> confirmSend());
+                break;
+            default:
+                if (linked) {
+                    setStep(stepPayload, ST_DONE, "2", "GhostPad is running on your PS5",
+                            "It was already running.", "Resend", v -> confirmSend());
+                } else {
+                    setStep(stepPayload, ST_PENDING, "2", "Send GhostPad to your PS5",
+                            "Open the ELF loader on your PS5 first.", "Send", v -> confirmSend());
                 }
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "lan ip", e);
         }
-        return "?";
+
+        // Step 3: PS5 connects back to the phone
+        if (!server.isRunning()) {
+            setStep(stepLink, ST_ERROR, "3", "This phone can't accept the PS5",
+                    "Port " + PadServer.PORT + " is in use. Force-stop the app and open it again.",
+                    null, null);
+        } else if (linked) {
+            setStep(stepLink, ST_DONE, "3", "PS5 connected",
+                    "Sending controller input to " + server.getClientIp(), null, null);
+        } else if (send == GamepadBridgeApp.SEND_DONE) {
+            setStep(stepLink, ST_WORKING, "3", "Waiting for the PS5 to connect…",
+                    "This usually takes a few seconds.", null, null);
+        } else {
+            setStep(stepLink, ST_PENDING, "3", "PS5 connects on its own",
+                    "Once GhostPad is running, the PS5 finds this phone automatically.", null, null);
+        }
+
+        banner.setVisibility(linked && pad != null ? View.VISIBLE : View.GONE);
+
+        String lan = NetUtil.lanIp();
+        tvPhoneAddr.setText("This phone: " + (lan == null ? "not on Wi-Fi" : lan)
+                + ", port " + PadServer.PORT);
     }
 
-    private String deviceName(int deviceId) {
+    private void setStep(View row, int state, String number, String title, String detail,
+                         String action, View.OnClickListener onAction) {
+        TextView badge = row.findViewById(R.id.step_badge);
+        TextView tvTitle = row.findViewById(R.id.step_title);
+        TextView tvDetail = row.findViewById(R.id.step_detail);
+        Button btn = row.findViewById(R.id.step_action);
+
+        switch (state) {
+            case ST_DONE:
+                badge.setBackgroundResource(R.drawable.badge_done);
+                badge.setText("✓");
+                badge.setTextColor(getColor(R.color.bg));
+                break;
+            case ST_WORKING:
+                badge.setBackgroundResource(R.drawable.badge_working);
+                badge.setText("…");
+                badge.setTextColor(getColor(R.color.bg));
+                break;
+            case ST_ERROR:
+                badge.setBackgroundResource(R.drawable.badge_error);
+                badge.setText("!");
+                badge.setTextColor(getColor(R.color.bg));
+                break;
+            default:
+                badge.setBackgroundResource(R.drawable.badge_pending);
+                badge.setText(number);
+                badge.setTextColor(getColor(R.color.text_secondary));
+        }
+        tvTitle.setText(title);
+        tvDetail.setText(detail);
+        tvDetail.setVisibility(detail == null || detail.isEmpty() ? View.GONE : View.VISIBLE);
+        if (action == null) {
+            btn.setVisibility(View.GONE);
+        } else {
+            btn.setVisibility(View.VISIBLE);
+            btn.setText(action);
+            btn.setOnClickListener(onAction);
+        }
+    }
+
+    private void confirmSend() {
+        new AlertDialog.Builder(this)
+                .setTitle("Send GhostPad to your PS5?")
+                .setMessage("This replaces any payload that's running on your PS5 right now. "
+                        + "Make sure the ELF loader is open on the PS5 first.")
+                .setPositiveButton("Send", (d, w) -> app.sendPayload())
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void toggleAdvanced() {
+        boolean show = advancedBox.getVisibility() != View.VISIBLE;
+        advancedBox.setVisibility(show ? View.VISIBLE : View.GONE);
+        tvAdvancedToggle.setText((show ? "▾" : "▸") + "  Advanced");
+    }
+
+    private static int parsePort(String s) {
         try {
-            InputDevice dev = InputDevice.getDevice(deviceId);
-            return dev != null ? dev.getName() : "id=" + deviceId;
-        } catch (Exception e) {
-            return "id=" + deviceId;
-        }
-    }
-
-    /** Name of the first connected gamepad (for profile loading at startup). */
-    private String firstConnectedGamepadName() {
-        for (int id : connectedGamepads) {
-            String n = deviceName(id);
-            if (n != null && !n.startsWith("id=")) return n;
-        }
-        return null;
-    }
-
-    private void onDeviceEvent(int id, String what) {
-        String name = deviceName(id);
-        String msg = "DEVICE " + what + "  " + name + " (id " + id + ")";
-        append(msg);
-        Log.i(TAG, msg);
-        refreshDeviceHeader();
-        if ("CONNECTED".equals(what)) {
-            if (DeviceProbe.isGamepadDevice(id)) {
-                connectedGamepads.add(id);
-                GamepadBridgeApp app = (GamepadBridgeApp) getApplication();
-                app.onGamepadConnected(name);
-            }
-        } else if ("DISCONNECTED".equals(what)) {
-            connectedGamepads.remove(id);
-        } else { // CHANGED: re-evaluate source
-            if (DeviceProbe.isGamepadDevice(id)) {
-                connectedGamepads.add(id);
-            } else {
-                connectedGamepads.remove(id);
-            }
-        }
-        updatePadConnected();
-    }
-
-    /** Push the wire "connected" flag from the tracked gamepad set. */
-    private void updatePadConnected() {
-        mapper.setPadConnected(!connectedGamepads.isEmpty());
-    }
-
-    /** Seed the tracked set for pads already connected at app launch. */
-    private void seedConnectedGamepads() {
-        int[] ids;
-        try {
-            ids = InputDevice.getDeviceIds();
-        } catch (Exception e) {
-            ids = null;
-        }
-        if (ids != null) {
-            for (int i = 0; i < ids.length; i++) {
-                if (DeviceProbe.isGamepadDevice(ids[i])) {
-                    connectedGamepads.add(ids[i]);
-                }
-            }
-        }
-        updatePadConnected();
-    }
-
-
-    private void refreshDeviceHeader() {
-        int[] ids;
-        try {
-            ids = InputDevice.getDeviceIds();
-        } catch (Exception e) {
-            tvDevice.setText("No controllers yet");
-            return;
-        }
-        if (ids == null || ids.length == 0) {
-            tvDevice.setText("No controllers yet");
-            return;
-        }
-        StringBuilder sb = new StringBuilder("Devices: ");
-        int shown = 0;
-        for (int i = 0; i < ids.length; i++) {
-            if (!DeviceProbe.isGamepadDevice(ids[i])) continue; // only external gamepads
-            if (shown > 0) sb.append(", ");
-            InputDevice d = InputDevice.getDevice(ids[i]);
-            String nm = (d != null) ? d.getName() : ("id=" + ids[i]);
-            int src = (d != null) ? d.getSources() : 0;
-            sb.append(nm).append(" [").append(sourceName(src)).append("]");
-            shown++;
-        }
-        if (shown == 0) {
-            tvDevice.setText("No controllers yet");
-            return;
-        }
-        tvDevice.setText(sb.toString());
-    }
-
-    private String sourceName(int sources) {
-        if ((sources & InputDevice.SOURCE_GAMEPAD) != 0) return "gamepad";
-        if ((sources & InputDevice.SOURCE_JOYSTICK) != 0) return "joystick";
-        if ((sources & InputDevice.SOURCE_DPAD) != 0) return "dpad";
-        if ((sources & InputDevice.SOURCE_KEYBOARD) != 0) return "keyboard";
-        return "sources=0x" + Integer.toHexString(sources);
-    }
-
-
-    /** /24 segment base (first three octets) of the phone's LAN IPv4, or null. */
-    private String findSubnetBase() {
-        try {
-            Enumeration<NetworkInterface> ifs = NetworkInterface.getNetworkInterfaces();
-            while (ifs.hasMoreElements()) {
-                NetworkInterface ni = ifs.nextElement();
-                if (!ni.isUp() || ni.isLoopback()) continue;
-                java.util.List<InterfaceAddress> addrs = ni.getInterfaceAddresses();
-                for (InterfaceAddress ia : addrs) {
-                    InetAddress a = ia.getAddress();
-                    if (a instanceof Inet4Address && !a.isLoopbackAddress()) {
-                        String h = a.getHostAddress();
-                        return h.substring(0, h.lastIndexOf('.'));
-                    }
-                }
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "subnet", e);
-        }
-        return null;
-    }
-
-    /** Parsed port from et_port; logs and returns -1 on bad input. */
-    private int parsePort() {
-        try {
-            int p = Integer.parseInt(etPort.getText().toString().trim());
-            if (p < 1 || p > 65535) return -1;
-            return p;
-        } catch (Exception e) {
-            append("port: invalid (need 1-65535)");
+            int p = Integer.parseInt(s.trim());
+            return (p >= 1 && p <= 65535) ? p : -1;
+        } catch (NumberFormatException e) {
             return -1;
         }
     }
 
-    /** Sweep the local /24 for the ELF loader port (default 9021). */
-    private void onScan() {
-        int port = parsePort();
-        if (port < 0) return;
-        String base = findSubnetBase();
-        if (base == null) {
-            append("scan: no LAN IPv4 address — check WiFi");
-            return;
-        }
-        foundIp = null;
-        btnScan.setEnabled(false);
-        tvPs5.setText("SCANNING " + base + ".0/24 ...");
-        append("scan: " + base + ".1-" + base + ".254  port " + port);
-        new NetworkScanner(base, port, new NetworkScanner.Listener() {
-            @Override
-            public void onOpen(String ip, int p) {
-                append("OPEN " + ip + ":" + p);
-                if (foundIp == null) {
-                    foundIp = ip;
-                    tvPs5.setText("PS5: " + ip + ":" + p);
-                }
-            }
-
-            @Override
-            public void onDone(int openCount) {
-                btnScan.setEnabled(true);
-                if (foundIp == null) {
-                    tvPs5.setText("PS5: none found on port " + port);
-                    append("scan: done, 0 open");
-                } else {
-                    append("scan: done, " + openCount + " open");
-                }
-            }
-        }).start();
+    private void setupNavRow(int id, String title, String detail, Class<?> target) {
+        View row = findViewById(id);
+        ((TextView) row.findViewById(R.id.nav_title)).setText(title);
+        ((TextView) row.findViewById(R.id.nav_detail)).setText(detail);
+        row.setOnClickListener(v -> open(target));
     }
 
-    /** Stream the bundled payload to the ELF loader (nc-style). */
-    private void onDeploy() {
-        int port = parsePort();
-        if (port < 0) return;
-        String ip = etIp.getText().toString().trim();
-        if (ip.isEmpty()) {
-            if (foundIp != null) {
-                ip = foundIp;
-            } else {
-                append("deploy: no target — scan or enter IP");
-                return;
-            }
-        }
-        btnDeploy.setEnabled(false);
-        tvPs5.setText("DEPLOYING → " + ip + ":" + port);
-        append("deploy: " + ip + ":" + port);
-        final String fip = ip;
-        new Thread(() -> {
-            String result;
-            try {
-                byte[] payload = Ps5Deployer.loadPayload(this);
-                Ps5Deployer.deploy(fip, port, payload);
-                result = "OK " + payload.length + " bytes";
-            } catch (Exception e) {
-                result = "FAILED " + e;
-            }
-            final String r = result;
-            mainHandler.post(() -> {
-                btnDeploy.setEnabled(true);
-                if (r.startsWith("OK")) {
-                    tvPs5.setText("DEPLOYED → " + fip + ":" + port);
-                } else {
-                    tvPs5.setText("DEPLOY FAILED");
-                }
-                append("deploy: " + r);
-            });
-        }).start();
-    }
-
-    private void append(String line) {
-        String stamped = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date())
-                + "  " + line;
-        buffer.append(stamped).append('\n');
-        lineCount++;
-        if (lineCount > MAX_LINES) {
-            int drop = lineCount - MAX_LINES / 2;
-            int idx = 0;
-            for (int i = 0; i < drop; i++) {
-                int nl = buffer.indexOf("\n", idx);
-                if (nl < 0) break;
-                idx = nl + 1;
-            }
-            buffer.delete(0, idx);
-            lineCount -= drop;
-        }
-        tvLog.setText(buffer);
-        scrollView.post(new Runnable() {
-            @Override
-            public void run() {
-                scrollView.scrollTo(0, tvLog.getBottom());
-            }
-        });
+    private void open(Class<?> cls) {
+        startActivity(new Intent(this, cls));
     }
 
     @Override
-    public boolean dispatchKeyEvent(KeyEvent event) {
-        int action = event.getAction();
-        String actionStr;
-        if (action == KeyEvent.ACTION_DOWN) actionStr = "DOWN";
-        else if (action == KeyEvent.ACTION_UP) actionStr = "UP";
-        else if (action == KeyEvent.ACTION_MULTIPLE) actionStr = "MULTIPLE";
-        else actionStr = "action=" + action;
-        String name = KeyEvent.keyCodeToString(event.getKeyCode());
-        String msg = String.format(Locale.US,
-                "KEY %s  %s (code %d)  device=%s",
-                actionStr, name, event.getKeyCode(), deviceName(event.getDeviceId()));
-        append(msg);
-        Log.i(TAG, msg);
-        if (action == KeyEvent.ACTION_DOWN || action == KeyEvent.ACTION_UP) {
-            mapper.onKey(event.getKeyCode(), action == KeyEvent.ACTION_DOWN);
-        }
-        return true; // consume everything (incl. back) so the app never exits mid-test
-    }
-
-    @Override
-    public boolean dispatchGenericMotionEvent(MotionEvent event) {
-        int action = event.getAction();
-        if (action == MotionEvent.ACTION_BUTTON_PRESS
-                || action == MotionEvent.ACTION_BUTTON_RELEASE) {
-            append(String.format(Locale.US,
-                    "BTN %s  buttonState=0x%02X  device=%s",
-                    MotionEvent.actionToString(action), event.getButtonState(),
-                    deviceName(event.getDeviceId())));
-        }
-        for (int axis : MAP_AXES) {
-            float value = event.getAxisValue(axis);
-            mapper.onAxis(axis, value); // always apply: 0.0f is a valid release/recenter
-            if (value != 0.0f) {
-                append(String.format(Locale.US,
-                        "AXIS %s = %.3f  device=%s",
-                        MotionEvent.axisToString(axis), value,
-                        deviceName(event.getDeviceId())));
-            }
-        }
+    public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add(0, MENU_TEST, 0, "Test controller");
+        menu.add(0, MENU_DIAGNOSTICS, 1, "Diagnostics");
         return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == MENU_TEST) {
+            open(TestActivity.class);
+            return true;
+        }
+        if (item.getItemId() == MENU_DIAGNOSTICS) {
+            open(DiagnosticsActivity.class);
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    /** TextWatcher that only cares about the final text. */
+    private static final class Watcher implements TextWatcher {
+        private final Consumer<String> onChange;
+
+        Watcher(Consumer<String> onChange) {
+            this.onChange = onChange;
+        }
+
+        @Override
+        public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+
+        @Override
+        public void onTextChanged(CharSequence s, int st, int b, int c) {}
+
+        @Override
+        public void afterTextChanged(Editable s) {
+            onChange.accept(s.toString());
+        }
     }
 }

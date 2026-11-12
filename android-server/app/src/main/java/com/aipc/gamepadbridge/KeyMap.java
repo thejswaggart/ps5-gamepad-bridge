@@ -61,6 +61,67 @@ public final class KeyMap {
         }
     }
 
+    /**
+     * Friendly PS5 button name for the UI. Note the wire-bit names differ
+     * from DualSense labels: BTN_SHARE (0x0001) is the Create button and
+     * BTN_CREATE (0x10000) is the PS button.
+     */
+    public static String buttonLabel(int bit) {
+        switch (bit) {
+            case PadFrame.BTN_CROSS:    return "✕  Cross";
+            case PadFrame.BTN_CIRCLE:   return "○  Circle";
+            case PadFrame.BTN_SQUARE:   return "□  Square";
+            case PadFrame.BTN_TRIANGLE: return "△  Triangle";
+            case PadFrame.BTN_UP:       return "D-pad up";
+            case PadFrame.BTN_DOWN:     return "D-pad down";
+            case PadFrame.BTN_LEFT:     return "D-pad left";
+            case PadFrame.BTN_RIGHT:    return "D-pad right";
+            case PadFrame.BTN_L1:       return "L1";
+            case PadFrame.BTN_R1:       return "R1";
+            case PadFrame.BTN_L2:       return "L2";
+            case PadFrame.BTN_R2:       return "R2";
+            case PadFrame.BTN_L3:       return "L3 (press left stick)";
+            case PadFrame.BTN_R3:       return "R3 (press right stick)";
+            case PadFrame.BTN_OPTIONS:  return "Options";
+            case PadFrame.BTN_SHARE:    return "Create";
+            case PadFrame.BTN_CREATE:   return "PS button";
+            case PadFrame.BTN_TOUCHPAD: return "Touchpad press";
+            default:                    return buttonName(bit);
+        }
+    }
+
+    /** Friendly name for an Android keycode from a controller ("A", "LB / L1"). */
+    public static String keyLabel(int code) {
+        switch (code) {
+            case android.view.KeyEvent.KEYCODE_BUTTON_A:      return "A";
+            case android.view.KeyEvent.KEYCODE_BUTTON_B:      return "B";
+            case android.view.KeyEvent.KEYCODE_BUTTON_X:      return "X";
+            case android.view.KeyEvent.KEYCODE_BUTTON_Y:      return "Y";
+            case android.view.KeyEvent.KEYCODE_BUTTON_L1:     return "LB / L1";
+            case android.view.KeyEvent.KEYCODE_BUTTON_R1:     return "RB / R1";
+            case android.view.KeyEvent.KEYCODE_BUTTON_L2:     return "LT / L2";
+            case android.view.KeyEvent.KEYCODE_BUTTON_R2:     return "RT / R2";
+            case android.view.KeyEvent.KEYCODE_BUTTON_THUMBL: return "Left stick press";
+            case android.view.KeyEvent.KEYCODE_BUTTON_THUMBR: return "Right stick press";
+            case android.view.KeyEvent.KEYCODE_BUTTON_START:  return "Start / Menu";
+            case android.view.KeyEvent.KEYCODE_BUTTON_SELECT: return "Select / View";
+            case android.view.KeyEvent.KEYCODE_BUTTON_MODE:   return "Home / Guide";
+            case android.view.KeyEvent.KEYCODE_DPAD_UP:       return "D-pad up";
+            case android.view.KeyEvent.KEYCODE_DPAD_DOWN:     return "D-pad down";
+            case android.view.KeyEvent.KEYCODE_DPAD_LEFT:     return "D-pad left";
+            case android.view.KeyEvent.KEYCODE_DPAD_RIGHT:    return "D-pad right";
+            case android.view.KeyEvent.KEYCODE_BACK:          return "Back";
+            default:
+                break;
+        }
+        String s = android.view.KeyEvent.keyCodeToString(code);
+        if (s.startsWith("KEYCODE_")) s = s.substring(8);
+        if (s.isEmpty() || Character.isDigit(s.charAt(0))) return "Key " + code;
+        if (s.startsWith("BUTTON_")) return "Button " + s.substring(7);
+        s = s.replace('_', ' ').toLowerCase(java.util.Locale.US);
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
+
     /** Stock Xbox mapping (the app's original hardcoded table). */
     private static final int[][] STOCK = {
             { 96,  PadFrame.BTN_CROSS },
