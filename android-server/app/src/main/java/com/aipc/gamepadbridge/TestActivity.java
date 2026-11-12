@@ -75,7 +75,7 @@ public class TestActivity extends PadActivity {
         card.addView(swPhone);
 
         btnTest = new Button(this, null, 0, R.style.Button_Text);
-        btnTest.setText("Test rumble");
+        btnTest.setText("Test rumble: light, medium, full");
         btnTest.setOnClickListener(v -> app.getRumbler().test());
         LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);

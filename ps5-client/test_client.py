@@ -8,8 +8,8 @@ side independently of the PS5 payload.
 Usage:
   python3 test_client.py [host] [port] [maxframes] [rumble]
     maxframes: 0 (default) = run until killed; N = exit after N frames.
-    rumble:    send RumbleFrames back like the PS5 payload will: pulses of
-               light, heavy and full rumble with pauses between, repeated.
+    rumble:    send RumbleFrames back like the PS5 payload will: light,
+               medium and full rumble with pauses between, repeated.
 Prints one line per *changed* state (deduped) so the log is readable.
 """
 import socket, struct, sys, threading, time
@@ -22,10 +22,11 @@ def rumble_frame(large, small, ttl=RUMBLE_TTL):
     return struct.pack("<IBBH", RUMBLE_MAGIC, large, small, ttl)
 
 def rumble_loop(s):
-    """Cycle: light, pause, heavy, pause, full, pause. Refresh every ttl/2."""
-    steps = [("light", 0, 90, 1.0), ("off", 0, 0, 1.0),
-             ("heavy", 200, 0, 1.0), ("off", 0, 0, 1.0),
-             ("full", 255, 255, 1.0), ("off", 0, 0, 2.0)]
+    """Cycle light, medium, full (2 s each, 1 s pauses). Refresh every ttl/2.
+    On Android 9 controllers these become pulsed, faster-pulsed and steady."""
+    steps = [("light", 0, 60, 2.0), ("off", 0, 0, 1.0),
+             ("medium", 140, 0, 2.0), ("off", 0, 0, 1.0),
+             ("full", 255, 255, 2.0), ("off", 0, 0, 2.0)]
     try:
         while True:
             for name, large, small, secs in steps:

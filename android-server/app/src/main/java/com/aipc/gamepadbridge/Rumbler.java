@@ -12,8 +12,10 @@ import android.view.InputDevice;
  * Android exposes one for it, otherwise (if the user allows it) the phone's.
  *
  * Android 9 gives one vibrator per device, so the PS5's two motors are
- * combined into one strength. Many controller drivers can only switch the
- * motor on or off; then weak rumble below a threshold is dropped.
+ * combined into one strength. Controller motors on Android 9 can only be
+ * switched on or off, so weaker rumble is made by pulsing the motor (the
+ * trick on/off-motor consoles use): light and medium are short on/off
+ * cycles, strong is continuous. Very weak rumble is dropped.
  */
 public final class Rumbler {
 
@@ -23,6 +25,18 @@ public final class Rumbler {
 
     /** With on/off-only motors, ignore rumble weaker than this (0-255). */
     private static final int ON_OFF_THRESHOLD = 24;
+
+    /*
+     * Pulse levels for on/off motors: {on ms, off ms} per cycle. Small,
+     * cheap motors need ~50 ms to spin up, so each "on" slice is at least
+     * that long; light is a slow throb, medium a fast one.
+     * Levels: 1 light, 2 medium, 3 strong (continuous).
+     */
+    private static final int LEVEL_OFF = 0, LEVEL_LIGHT = 1, LEVEL_MEDIUM = 2, LEVEL_STRONG = 3;
+    private static final int[][] PULSE = { null, {60, 140}, {100, 50}, null };
+    private static final int LIGHT_BELOW = 100, MEDIUM_BELOW = 180;
+    /** Android 9's input vibrator accepts at most 100 pattern entries. */
+    private static final int MAX_PATTERN = 100;
 
     private final Vibrator phoneVibrator;
 
@@ -93,12 +107,70 @@ public final class Rumbler {
         drive(Math.max(large, small), ttlMs);
     }
 
-    /** A short strong buzz on the current target, ignoring the PS5. */
+    /** Strengths the test plays, 1.5 s each with short pauses between. */
+    private static final int[] TEST_STEPS = {60, 140, 255};
+    private static final int TEST_ON_MS = 1500, TEST_GAP_MS = 700;
+
+    /**
+     * Play light, medium, then full rumble (about 6 s) on the current
+     * target, the same way PS5 rumble at those strengths would feel.
+     */
     public synchronized void test() {
         Vibrator v = target;
         if (v == null) return;
-        vibrate(v, 400, 255);
-        issuedAmp = 0; // let the next PS5 frame take over at once
+        boolean graded = hasAmplitudeControl(v);
+        java.util.ArrayList<long[]> steps = new java.util.ArrayList<>(); // {ms, amp}
+        for (int i = 0; i < TEST_STEPS.length; i++) {
+            if (i > 0) steps.add(new long[]{TEST_GAP_MS, 0});
+            int amp = TEST_STEPS[i];
+            int[] cycle = graded ? null : PULSE[levelFor(amp)];
+            if (cycle == null) {
+                steps.add(new long[]{TEST_ON_MS, graded ? amp : 255});
+            } else {
+                for (int t = 0; t < TEST_ON_MS; t += cycle[0] + cycle[1]) {
+                    steps.add(new long[]{cycle[0], 255});
+                    steps.add(new long[]{cycle[1], 0});
+                }
+            }
+        }
+        play(v, steps, graded);
+        issuedAmp = -1; // so stop() cancels it, and the next PS5 frame takes over
+    }
+
+    /**
+     * Play {ms, amp} steps (amp 0 = off). Android's input vibrator wants
+     * strict off/on alternation starting with "off", so merge neighbours.
+     */
+    @SuppressWarnings("deprecation")
+    private static void play(Vibrator v, java.util.List<long[]> steps, boolean graded) {
+        java.util.ArrayList<Long> t = new java.util.ArrayList<>();
+        java.util.ArrayList<Integer> a = new java.util.ArrayList<>();
+        t.add(0L);
+        a.add(0);
+        for (long[] st : steps) {
+            int amp = (int) st[1];
+            int last = a.get(a.size() - 1);
+            boolean sameKind = (amp == 0) == (last == 0) && (!graded || amp == last);
+            if (sameKind) {
+                t.set(t.size() - 1, t.get(t.size() - 1) + st[0]);
+            } else {
+                t.add(st[0]);
+                a.add(amp);
+            }
+        }
+        int n = Math.min(t.size(), MAX_PATTERN);
+        long[] timings = new long[n];
+        int[] amps = new int[n];
+        for (int i = 0; i < n; i++) {
+            timings[i] = t.get(i);
+            amps[i] = a.get(i);
+        }
+        if (Build.VERSION.SDK_INT >= 26) {
+            v.vibrate(graded ? VibrationEffect.createWaveform(timings, amps, -1)
+                    : VibrationEffect.createWaveform(timings, -1));
+        } else {
+            v.vibrate(timings, -1);
+        }
     }
 
     public synchronized void stop() {
@@ -111,18 +183,50 @@ public final class Rumbler {
         Vibrator v = target;
         if (v == null) return;
         boolean graded = hasAmplitudeControl(v);
-        if (!graded) amp = amp >= ON_OFF_THRESHOLD ? 255 : 0;
+        // For on/off motors, "amp" from here on is a pulse level, not 0-255.
+        if (!graded) amp = levelFor(amp);
         if (amp == 0 || ttlMs == 0) {
             if (issuedAmp != 0) v.cancel();
             issuedAmp = 0;
             return;
         }
         long now = SystemClock.uptimeMillis();
-        // Re-issue on a change, or before the previous one-shot runs out.
+        // Re-issue on a change, or before the previous effect runs out.
         if (amp != issuedAmp || now - issuedAt >= ttlMs / 3) {
-            vibrate(v, ttlMs, amp);
+            if (graded) vibrate(v, ttlMs, amp);
+            else pulse(v, ttlMs, amp);
             issuedAmp = amp;
             issuedAt = now;
+        }
+    }
+
+    static int levelFor(int amp) {
+        if (amp < ON_OFF_THRESHOLD) return LEVEL_OFF;
+        if (amp < LIGHT_BELOW) return LEVEL_LIGHT;
+        if (amp < MEDIUM_BELOW) return LEVEL_MEDIUM;
+        return LEVEL_STRONG;
+    }
+
+    /** Run an on/off motor at a pulse level for about ms milliseconds. */
+    @SuppressWarnings("deprecation")
+    private static void pulse(Vibrator v, int ms, int level) {
+        int[] cycle = PULSE[level];
+        if (cycle == null) {
+            vibrate(v, ms, 255);
+            return;
+        }
+        int period = cycle[0] + cycle[1];
+        int cycles = Math.max(1, Math.min((ms + period - 1) / period, (MAX_PATTERN - 1) / 2));
+        long[] timings = new long[1 + 2 * cycles];
+        timings[0] = 0; // start with the motor on
+        for (int i = 0; i < cycles; i++) {
+            timings[1 + 2 * i] = cycle[0];
+            timings[2 + 2 * i] = cycle[1];
+        }
+        if (Build.VERSION.SDK_INT >= 26) {
+            v.vibrate(VibrationEffect.createWaveform(timings, -1));
+        } else {
+            v.vibrate(timings, -1);
         }
     }
 

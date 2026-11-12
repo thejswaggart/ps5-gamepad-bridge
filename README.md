@@ -74,7 +74,10 @@ non-zero. If the link drops, the phone stops on its own when `ttl` runs out.
 The phone vibrates the first connected controller that Android reports a
 motor for, or (if allowed on the Test controller screen) the phone itself.
 Android 9 has one motor per device, so both values become one strength, and
-many controller drivers only switch it on or off. On the test phone (Android
+it can only switch a controller's motor on or off. Weaker rumble is made by
+pulsing it: light is 60 ms on / 140 ms off, medium 100 ms on / 50 ms off,
+strong is steady (strength 24–99 / 100–179 / 180+). **Test rumble** on the
+Test controller screen plays all three. On the test phone (Android
 9, kernel 4.4) an Xbox Wireless Controller has no usable motor over Bluetooth
 or USB; a USB GameCube-style pad rumbles. **The PS5 payload doesn't send
 RumbleFrames yet**; `test_client.py <phone-ip> 8471 0 rumble` stands in for it.
