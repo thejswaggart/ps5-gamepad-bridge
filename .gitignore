@@ -5,6 +5,11 @@ ps5-client/*.elf
 ps5-client/*.o
 android-server/app/src/main/assets/ghostpad-net.elf
 
+# PS4 payload (built by ps4-client/Makefile, copied into the app's assets)
+ps4-client/*.elf
+ps4-client/*.o
+android-server/app/src/main/assets/ps4-ghostpad.elf
+
 # Android build outputs
 android-server/.gradle/
 android-server/build/
