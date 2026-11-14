@@ -91,14 +91,10 @@ extern int32_t scePadVirtualDeviceInsertData(int32_t handle, const void *padData
 extern int32_t sceKernelSendNotificationRequest(int unk0, void *req, size_t size, int unk1);
 
 /* Virtual device type passed to scePadVirtualDeviceAddDevice().
- * PS5: 3 = DualSense (verified).
- * TODO(PS4): the PS4 value for a DualShock 4 (DS4) is not documented;
- * 0 (DS4) is the candidate — unverified. */
-#ifdef __PROSPERO__
+ * 3 = DualShock 4 on PS4 (confirmed by Control4Free, a working PS4 payload
+ * that creates a virtual DS4 with type 3) and DualSense on PS5. Both
+ * platforms use 3. */
 #define VIRTUAL_DEVICE_TYPE 3
-#else
-#define VIRTUAL_DEVICE_TYPE 0
-#endif
 
 /* ── Single controller slot ───────────────────────────────────────────── */
 #define MAX_SLOTS 1
@@ -107,6 +103,7 @@ typedef struct {
     volatile int32_t handle;        /* VDA handle, -1 = not ready */
     volatile int     vdi_ready;
     volatile uint32_t inject_count;
+    volatile int     vda_gave_up;  /* set when no handle could be obtained */
 } ctrl_slot_t;
 
 static ctrl_slot_t     g_slots[MAX_SLOTS];
@@ -117,6 +114,12 @@ static int32_t         g_inject_uid = 0x10000000;
 static uint64_t        g_klog_q[KLOG_QSIZE];
 static int             g_klog_qw = 0, g_klog_qr = 0;
 static pthread_mutex_t g_klog_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* Set once the klog thread has drained the ring-buffer backlog (see
+ * klog_capture_thread): only then is a DEVICE_ADDED line one we created,
+ * not a stale one from boot. create_vda_for_slot waits for this before
+ * calling scePadVirtualDeviceAddDevice. */
+static volatile int g_klog_drained = 0;
 
 static void klog_enqueue(uint64_t id) {
     pthread_mutex_lock(&g_klog_lock);
@@ -162,14 +165,14 @@ static uint64_t parse_hex_str(const char *s) {
     return v;
 }
 
-/* TODO(PS4): the klog match strings below ("DEVICE_ADDED", "subType:22",
- * "capabilityBattery:0") are the PS5 klog format. The PS4 klog
- * DEVICE_ADDED line format is not verified; on PS4 the filter may need
- * different strings (or a different klog source). */
+/* PS4 klog DEVICE_ADDED line (confirmed by Control4Free, a working PS4
+ * payload): "#LOGIN MGR# Receive Event : SCE_MBUS_EVENT_DEVICE_ADDED
+ * [DeviceId:0x7030d][type:1][subType:2]" -- subType:2 is the Remote Play
+ * (virtual) pad. The PS5 line differs (subType:22, capabilityBattery),
+ * so match the PS4 strings. */
 static void parse_klog_line(const char *line) {
     if (!strstr(line, "DEVICE_ADDED"))        return;
-    if (!strstr(line, "subType:22"))          return;
-    if (!strstr(line, "capabilityBattery:0")) return;
+    if (!strstr(line, "subType:2"))           return;
     const char *p = strstr(line, "DeviceId:0x");
     if (!p) p = strstr(line, "deviceId=0x");
     if (!p) return;
@@ -199,13 +202,36 @@ static void *klog_capture_thread(void *arg) {
         }
         if (fd<0){close(sock);return NULL;}
     }
+    /* Drain the klog backlog before capturing: the stream (the TCP
+     * 127.0.0.1:3232 bridge, or /dev/klog) replays the whole ring buffer
+     * from boot, which can contain DEVICE_ADDED lines for virtual pads
+     * created before this process started (orphaned devices from a
+     * previous run, ...). Enqueuing those stale IDs would hand
+     * create_vda_for_slot the wrong DeviceId. So write a marker and read
+     * until it comes back: that proves the reader has reached the end of
+     * the backlog and is now live. (Control4Free does exactly this.) */
+    gp_log("klog: draining backlog\n");
+    gp_log("KLOG-DRAIN\n");
+    int drained = 0;
     while (1) {
         ssize_t len = read(fd, buf, sizeof(buf));
         if (len < 0) { if (errno==EINTR) continue; break; }
         if (len == 0) { usleep(10000); continue; }
         for (ssize_t i=0; i<len; i++) {
             char c = buf[i];
-            if (c=='\n'||line_len>=sizeof(line)-1){line[line_len]='\0';parse_klog_line(line);line_len=0;}
+            if (c=='\n'||line_len>=sizeof(line)-1){
+                line[line_len]='\0';
+                if (!drained) {
+                    if (strstr(line, "[GC] KLOG-DRAIN")) {
+                        drained = 1;
+                        g_klog_drained = 1;
+                        gp_log("klog: backlog drained (live)\n");
+                    }
+                } else {
+                    parse_klog_line(line);
+                }
+                line_len=0;
+            }
             else if (c!='\r') line[line_len++]=c;
         }
     }
@@ -216,7 +242,18 @@ static void *klog_capture_thread(void *arg) {
 static void inject_pad(int slot, const ScePadData *pad) {
     int32_t h = g_slots[slot].handle;
     if (h < 0 || !g_slots[slot].vdi_ready) return;
-    int vr = scePadVirtualDeviceInsertData(h, pad);
+    ScePadData stamped = *pad;
+#ifdef __ORBIS__
+    /* PS4: the sample needs a rising timestamp + counter; a constant one
+     * is seen by de-duplicating readers as "no new data". (Control4Free.) */
+    static uint64_t stamp = 0;
+    static uint8_t  count = 0;
+    stamp += 33000u;
+    count++;
+    stamped.timestamp = stamp;
+    stamped.count     = count;
+#endif
+    int vr = scePadVirtualDeviceInsertData(h, &stamped);
     uint32_t n = ++g_slots[slot].inject_count;
     if ((n % 600) == 0)
         gp_log("slot[%d] VDI #%u ret=0x%08x\n", slot, n, (uint32_t)vr);
@@ -546,7 +583,7 @@ static void *tcp_client(void *arg) {
                 /* Pad connected: make sure the virtual device exists, then
                  * stream its data. Creation is what makes the PS5 show a
                  * controller (the connected field alone is not honored). */
-                if (!g_slots[0].vdi_ready) {
+                if (!g_slots[0].vdi_ready && !g_slots[0].vda_gave_up) {
                     int32_t h = create_vda_for_slot(0);
                     if (h >= 0) {
                         g_slots[0].handle       = h;
@@ -554,7 +591,11 @@ static void *tcp_client(void *arg) {
                         g_slots[0].inject_count = 0;
                         rumble_out_set_handle(h);
                     } else {
-                        gp_log("tcp: VDA create failed (retry next frame)\n");
+                        /* create_vda_for_slot set vda_gave_up (no handle);
+                         * do NOT retry next frame (would orphan another
+                         * device we can't address). */
+                        if (g_slots[0].vda_gave_up)
+                            gp_log("tcp: VDA gave up (no handle); not retrying\n");
                     }
                 }
                 if (g_slots[0].vdi_ready) {
@@ -604,9 +645,20 @@ static int32_t create_vda_for_slot(int slot) {
     uint64_t dev_id = klog_dequeue_ms(10000);
     if (dev_id) {
         handle = (int32_t)(dev_id & 0xffffffffu);
+#ifdef __ORBIS__
+        /* PS4: no force_bind. The device is created unassigned (user 1),
+         * so the PS4 shows its own "Who's using this controller?" screen
+         * and the user picks there. sceMbusBindDeviceWithUserId (what
+         * force_bind calls) does not return in a PS4 payload process
+         * (PS4-AnyController), so it is not called. The klog DeviceId
+         * IS the handle for scePadVirtualDeviceInsertData. */
+        gp_log("slot[%d] PS4: handle=0x%x from klog DeviceId (no force_bind; user picks on console)\n",
+               slot, (uint32_t)handle);
+#else
         int br = shellui_pad_force_bind(dev_id, g_inject_uid);
         gp_log("slot[%d] force_bind(0x%llx, 0x%08x) ret=%d\n",
                slot, (unsigned long long)dev_id, (uint32_t)g_inject_uid, br);
+#endif
     } else if (handle >= 0) {
         gp_log("slot[%d] klog timeout - using direct handle %d\n", slot, handle);
     } else {
@@ -622,10 +674,20 @@ static int32_t create_vda_for_slot(int slot) {
                                      slot,(uint32_t)uids[ui],idx,handle);
             }
     }
-    if (handle>=0)
+    if (handle>=0) {
         gp_log("slot[%d] VDI handle=0x%x ready\n", slot, (uint32_t)handle);
-    else
-        gp_log("slot[%d] ERROR: no VDA handle\n", slot);
+    } else {
+        /* No handle at all: on PS4 the device IS created (VDA returned
+         * 0x803b0006) but we have no DeviceId to address it. Do NOT retry:
+         * a retry creates another orphaned device we can't address, and
+         * enough of them fill the PS4's controller slots ("Cannot connect
+         * another controller"). Stop creating until the payload is
+         * restarted. (Control4Free: "If no line arrives, it stops creating
+         * controllers until it is restarted, rather than leave devices
+         * behind that it can no longer address.") */
+        g_slots[slot].vda_gave_up = 1;
+        gp_log("slot[%d] ERROR: no VDA handle - NOT retrying (avoids orphaned devices)\n", slot);
+    }
     return handle;
 }
 
@@ -684,6 +746,7 @@ int main(void) {
     g_slots[0].handle       = -1;
     g_slots[0].vdi_ready    = 0;
     g_slots[0].inject_count = 0;
+    g_slots[0].vda_gave_up  = 0;
 
     sceUserServiceInitialize(NULL);
     sceUserServiceGetInitialUser(&userId);

@@ -18,3 +18,6 @@ android-server/local.properties
 
 # Logs / scratch
 *.log
+
+# PS4 port plan — local notes, not committed
+PS4-PORT-PLAN.md

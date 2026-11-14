@@ -1,5 +1,5 @@
 PS4_HOST ?= PS4
-PORT     ?= 9021
+PORT     ?= 9090
 TARGET   := ps4-ghostpad.elf
 
 ifndef PS4_PAYLOAD_SDK
