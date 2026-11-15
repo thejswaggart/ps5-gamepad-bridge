@@ -110,9 +110,13 @@ public class GamepadBridgeApp extends Application {
 
         consoles = new ConsoleStore(prefs);
         migrateLegacyConsole();
+        server.setHelloListener(this::onHello);
         // Gate the server to the active console (null = accept any, which is
-        // the behaviour before a console has ever been chosen).
+        // the behaviour before a console has ever been chosen). A stored MAC
+        // keeps the console recognised across DHCP address changes.
         server.setAllowedClientIp(consoles.getActiveAddress());
+        Console active = consoles.getActive();
+        server.setAllowedClientMac(active != null ? active.mac : null);
         server.start();
 
         InputManager im = (InputManager) getSystemService(Context.INPUT_SERVICE);
@@ -300,6 +304,35 @@ public class GamepadBridgeApp extends Application {
         notifyStatus();
     }
 
+    /**
+     * A console announced itself (its {@link HelloFrame}). Record its durable
+     * identity (MAC / firmware / name / type) on the matching stored console,
+     * reconciling by MAC so a DHCP address change folds into one entry. The
+     * gate (which only lets the active console reach here) is re-synced to the
+     * learned MAC and any new address. Runs off the reader thread.
+     */
+    private void onHello(HelloFrame hf, String fromIp) {
+        final String mac = hf.macString();
+        final int type = (hf.type == Console.TYPE_PS4 || hf.type == Console.TYPE_PS5)
+                ? hf.type : Console.TYPE_UNKNOWN;
+        main.post(() -> {
+            boolean wasActive = consoles.getActiveAddress() != null;
+            Console stored = consoles.applyHello(fromIp, mac, hf.firmware, hf.name, type);
+            if (wasActive) {
+                // The gate guarantees a gated connection is the active console,
+                // so follow it to its (possibly new) address and learned MAC.
+                consoles.setActiveAddress(stored.address);
+                server.setAllowedClientIp(stored.address);
+                server.setAllowedClientMac(stored.mac);
+            }
+            AppLog.i("Hello from " + stored.displayName() + " — " + stored.typeLabel()
+                    + (stored.mac != null ? " " + stored.mac : "")
+                    + (stored.firmware != null && !stored.firmware.isEmpty()
+                        ? " fw " + stored.firmware : ""));
+            notifyStatus();
+        });
+    }
+
     public void addStatusListener(Runnable r) { statusListeners.add(r); }
     public void removeStatusListener(Runnable r) { statusListeners.remove(r); }
 
@@ -348,6 +381,7 @@ public class GamepadBridgeApp extends Application {
         if (c == null) return;
         consoles.setActiveAddress(c.address);
         server.setAllowedClientIp(c.address);
+        server.setAllowedClientMac(c.mac); // durable identity, if we know it
         if (server.isClientConnected()) {
             if (c.address.equals(server.getClientIp())) {
                 notifyStatus(); // already streaming this console

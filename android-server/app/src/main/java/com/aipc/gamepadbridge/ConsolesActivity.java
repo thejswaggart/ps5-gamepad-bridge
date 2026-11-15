@@ -123,6 +123,9 @@ public class ConsolesActivity extends PadActivity {
 
         StringBuilder sb = new StringBuilder();
         sb.append(c.typeLabel()).append(" · ").append(c.address);
+        if (c.firmware != null && !c.firmware.isEmpty()) {
+            sb.append(" · fw ").append(c.firmware);
+        }
         if (isActive) {
             boolean sending = sendState == GamepadBridgeApp.SEND_SENDING
                     && c.address.equals(sendIp);

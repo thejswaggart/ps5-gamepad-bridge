@@ -53,8 +53,8 @@ else
 $(if $(PLATFORM),$(error PLATFORM must be ps5 or ps4))
 endif
 
-ps5-client.elf: gc_main.c shellui_pad.c rumble_out.c gc_types.h padframe.h shellui_pad.h rumble_out.h
-	$(CC) $(CFLAGS) -o $@ gc_main.c shellui_pad.c rumble_out.c $(LDFLAGS)
+ps5-client.elf: gc_main.c shellui_pad.c rumble_out.c hello_out.c gc_types.h padframe.h shellui_pad.h rumble_out.h hello_out.h
+	$(CC) $(CFLAGS) -o $@ gc_main.c shellui_pad.c rumble_out.c hello_out.c $(LDFLAGS)
 
-ps4-client.elf: gc_main.c shellui_pad.c rumble_out.c gc_types.h padframe.h shellui_pad.h rumble_out.h
-	$(CC) $(CFLAGS) -o $@ gc_main.c shellui_pad.c rumble_out.c $(LDFLAGS)
+ps4-client.elf: gc_main.c shellui_pad.c rumble_out.c hello_out.c gc_types.h padframe.h shellui_pad.h rumble_out.h hello_out.h
+	$(CC) $(CFLAGS) -o $@ gc_main.c shellui_pad.c rumble_out.c hello_out.c $(LDFLAGS)

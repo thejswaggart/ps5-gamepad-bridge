@@ -41,6 +41,7 @@
 
 #include "shellui_pad.h"
 #include "rumble_out.h"
+#include "hello_out.h"
 #include "gc_types.h"
 #include "padframe.h"
 
@@ -555,6 +556,12 @@ static void *tcp_client(void *arg) {
         fail_count = 0;
         gp_log("tcp: CONNECTED to %s\n", ipbuf);
         rumble_out_set_sock(sock);
+
+        /* Announce our identity (type / MAC / name) once, right after
+         * connect, so the phone can key this console on its durable MAC and
+         * still recognise it after a DHCP address change. Older phones that
+         * don't understand the HelloFrame magic simply skip these bytes. */
+        hello_send(sock);
 
         /* Receive exactly PADFRAME_SIZE bytes per frame, then inject. */
         uint8_t buf[PADFRAME_SIZE];
