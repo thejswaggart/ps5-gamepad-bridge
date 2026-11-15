@@ -70,6 +70,7 @@ public class GamepadBridgeApp extends Application {
     private PadMapper mapper;
     private PadServer server;
     private Rumbler rumbler;
+    private ConsoleStore consoles;
     private String currentProfileKey = "default";
     private String currentProfileName = "default";
 
@@ -106,6 +107,12 @@ public class GamepadBridgeApp extends Application {
         rumbler.setPhoneFallback(prefs.getBoolean(PREF_RUMBLE_PHONE, false));
         rumbler.selectFor(-1);
         server.setRumbleListener(rumbler::onRumble);
+
+        consoles = new ConsoleStore(prefs);
+        migrateLegacyConsole();
+        // Gate the server to the active console (null = accept any, which is
+        // the behaviour before a console has ever been chosen).
+        server.setAllowedClientIp(consoles.getActiveAddress());
         server.start();
 
         InputManager im = (InputManager) getSystemService(Context.INPUT_SERVICE);
@@ -304,8 +311,6 @@ public class GamepadBridgeApp extends Application {
 
     // ---- settings ----
 
-    public String getManualIp() { return prefs.getString(PREF_MANUAL_IP, ""); }
-    public void setManualIp(String ip) { prefs.edit().putString(PREF_MANUAL_IP, ip).apply(); }
     public int getLoaderPort() { return prefs.getInt(PREF_PORT, DEFAULT_LOADER_PORT); }
     public void setLoaderPort(int p) { prefs.edit().putInt(PREF_PORT, p).apply(); }
 
@@ -322,53 +327,108 @@ public class GamepadBridgeApp extends Application {
         notifyStatus();
     }
 
+    public ConsoleStore getConsoleStore() { return consoles; }
+
+    /** The console the app is currently bound to, or null if none chosen. */
+    public Console getActiveConsole() { return consoles.getActive(); }
+
+    /** How long to wait for a console's existing payload to reconnect
+     *  after switching to it, before deciding to (re)deploy. */
+    private static final int WAIT_FOR_CONNECT_MS = 4000;
+
     /**
-     * Find the PS5's ELF loader and stream the bundled payload to it.
-     * Order: the address under Advanced (if set), else the last PS5 that
-     * worked, else a sweep of the phone's /24.
+     * Make this console the active one: gate the server to its address and
+     * drop any other console that's streaming. The target's payload is often
+     * already running (it just couldn't get in while another console was
+     * active), so flip the gate, wait briefly for it to connect, and only
+     * (re)deploy the payload if it doesn't show up. The old console keeps
+     * retrying but is refused.
      */
-    public void sendPayload() {
-        if (sendState == SEND_SEARCHING || sendState == SEND_SENDING) return;
-        final String manual = getManualIp().trim();
-        final int port = getLoaderPort();
-        setSend(SEND_SEARCHING, null, "");
+    public void setActiveConsole(Console c) {
+        if (c == null) return;
+        consoles.setActiveAddress(c.address);
+        server.setAllowedClientIp(c.address);
+        if (server.isClientConnected()) {
+            if (c.address.equals(server.getClientIp())) {
+                notifyStatus(); // already streaming this console
+                return;
+            }
+            AppLog.i("Switching console: dropping " + server.getClientIp());
+            server.disconnectClient();
+        }
+        setSend(SEND_SEARCHING, c.address, "");
+        final Console target = c;
         new Thread(() -> {
-            String target;
-            if (!manual.isEmpty()) {
-                target = manual;
-            } else {
-                String lan = NetUtil.lanIp();
-                if (lan == null) {
-                    fail(null, "This phone isn't on a network. Connect it to the same Wi-Fi as your PS5.");
+            long deadline = System.currentTimeMillis() + WAIT_FOR_CONNECT_MS;
+            while (System.currentTimeMillis() < deadline) {
+                if (server.isClientConnected()
+                        && target.address.equals(server.getClientIp())) {
+                    AppLog.i(target.displayName() + " connected without redeploying");
+                    setSend(SEND_IDLE, target.address, "");
                     return;
                 }
-                String last = prefs.getString(PREF_LAST_IP, null);
-                if (last != null && NetUtil.sameSubnet(last, lan) && NetUtil.isOpen(last, port, 800)) {
-                    target = last;
-                } else {
-                    String base = NetUtil.subnetBase(lan);
-                    AppLog.i("Searching " + base + ".1-254 for the ELF loader on port " + port);
-                    target = NetUtil.findFirstOpen(base, port);
-                    if (target == null) {
-                        fail(null, "No PS5 found. Start the ELF loader on your PS5 and try again, "
-                                + "or enter its address under Advanced.");
-                        return;
-                    }
+                try {
+                    Thread.sleep(200);
+                } catch (InterruptedException e) {
+                    return;
                 }
             }
-            setSend(SEND_SENDING, target, "");
-            AppLog.i("Sending payload to " + target + ":" + port);
+            AppLog.i(target.displayName() + " didn't connect in time; sending the payload");
+            sendPayloadTo(target);
+        }, "ConsoleActivate").start();
+    }
+
+    /**
+     * One-tap send for the home screen: (re)deploy to the active console, or
+     * to the only known console. Returns false when there's nothing to send
+     * to and the UI should open the Consoles screen to scan.
+     */
+    public boolean sendPayload() {
+        Console active = consoles.getActive();
+        if (active == null) {
+            java.util.List<Console> all = consoles.all();
+            if (all.size() == 1) active = all.get(0);
+        }
+        if (active == null) return false;
+        setActiveConsole(active);
+        return true;
+    }
+
+    /** Stream the matching payload to one console's ELF loader. */
+    public void sendPayloadTo(final Console target) {
+        if (sendState == SEND_SENDING) return; // a deploy is already mid-flight
+        final int port = target.loaderPort > 0 ? target.loaderPort : getLoaderPort();
+        final String asset = PayloadDeployer.assetFor(target.type);
+        setSend(SEND_SENDING, target.address, "");
+        new Thread(() -> {
+            AppLog.i("Sending " + asset + " to " + target.address + ":" + port);
             try {
-                byte[] payload = Ps5Deployer.loadPayload(this);
-                Ps5Deployer.deploy(target, port, payload);
-                prefs.edit().putString(PREF_LAST_IP, target).apply();
+                byte[] payload = PayloadDeployer.loadPayload(this, asset);
+                PayloadDeployer.deploy(target.address, port, payload);
+                target.lastSeenMs = System.currentTimeMillis();
+                consoles.addOrUpdate(target);
                 AppLog.i("Payload sent (" + payload.length + " bytes)");
-                setSend(SEND_DONE, target, "");
+                setSend(SEND_DONE, target.address, "");
             } catch (Exception e) {
                 AppLog.i("Send failed: " + e);
-                fail(target, friendlyError(e, target, port));
+                fail(target.address, friendlyError(e, target.address, port));
             }
         }, "PayloadSender").start();
+    }
+
+    /** Seed the console list from the old single-IP prefs, once. */
+    private void migrateLegacyConsole() {
+        if (!consoles.isEmpty()) return;
+        String manual = prefs.getString(PREF_MANUAL_IP, "").trim();
+        String last = prefs.getString(PREF_LAST_IP, null);
+        String seed = !manual.isEmpty() ? manual : last;
+        if (seed != null && !seed.isEmpty()) {
+            Console c = new Console(seed, getLoaderPort());
+            c.type = Console.TYPE_PS5; // the app was PS5-only before this
+            consoles.addOrUpdate(c);
+            consoles.setActiveAddress(seed);
+            AppLog.i("Imported your previous PS5 (" + seed + ") into Consoles");
+        }
     }
 
     private void fail(String ip, String msg) {

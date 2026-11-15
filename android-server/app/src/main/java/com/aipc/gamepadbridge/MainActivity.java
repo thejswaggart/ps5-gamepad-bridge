@@ -36,7 +36,6 @@ public class MainActivity extends PadActivity {
     private View advancedBox;
     private TextView tvAdvancedToggle;
     private TextView tvPhoneAddr;
-    private EditText etIp;
     private EditText etPort;
 
     @Override
@@ -51,21 +50,20 @@ public class MainActivity extends PadActivity {
         advancedBox = findViewById(R.id.advanced);
         tvAdvancedToggle = findViewById(R.id.tv_advanced_toggle);
         tvPhoneAddr = findViewById(R.id.tv_phone_addr);
-        etIp = findViewById(R.id.et_ip);
         etPort = findViewById(R.id.et_port);
 
         findViewById(R.id.btn_play).setOnClickListener(v -> open(PlayModeActivity.class));
+        setupNavRow(R.id.btn_consoles, "Consoles",
+                "Scan for and switch between your PS4/PS5", ConsolesActivity.class);
         setupNavRow(R.id.btn_mapping, "Button mapping",
                 "Choose which controller button does what", MappingActivity.class);
         setupNavRow(R.id.btn_test, "Test controller",
-                "See what your PS5 receives", TestActivity.class);
+                "See what your console receives", TestActivity.class);
         // Keep the row ripples inside the card's rounded corners.
         findViewById(R.id.nav_card).setClipToOutline(true);
         tvAdvancedToggle.setOnClickListener(v -> toggleAdvanced());
 
-        etIp.setText(app.getManualIp());
         etPort.setText(String.valueOf(app.getLoaderPort()));
-        etIp.addTextChangedListener(new Watcher(s -> app.setManualIp(s.trim())));
         etPort.addTextChangedListener(new Watcher(s -> {
             int p = parsePort(s);
             if (p > 0) {
@@ -75,9 +73,8 @@ public class MainActivity extends PadActivity {
                 etPort.setError("Use a number from 1 to 65535");
             }
         }));
-        // Open Advanced if the user already set something there.
-        if (!app.getManualIp().isEmpty()
-                || app.getLoaderPort() != GamepadBridgeApp.DEFAULT_LOADER_PORT) {
+        // Open Advanced if the user already changed the loader port.
+        if (app.getLoaderPort() != GamepadBridgeApp.DEFAULT_LOADER_PORT) {
             toggleAdvanced();
         }
     }
@@ -104,48 +101,56 @@ public class MainActivity extends PadActivity {
                     "Bluetooth", v -> startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)));
         }
 
-        // Step 2: payload on the PS5
-        switch (send) {
-            case GamepadBridgeApp.SEND_SEARCHING:
-                setStep(stepPayload, ST_WORKING, "2", "Looking for your PS5…",
-                        "Searching your network for the ELF loader.", null, null);
-                break;
-            case GamepadBridgeApp.SEND_SENDING:
-                setStep(stepPayload, ST_WORKING, "2", "Sending GhostPad to your PS5…",
-                        "PS5 at " + sendIp, null, null);
-                break;
-            case GamepadBridgeApp.SEND_FAILED:
-                setStep(stepPayload, ST_ERROR, "2", "Couldn't send to your PS5",
-                        app.getSendDetail(), "Try again", v -> confirmSend());
-                break;
-            case GamepadBridgeApp.SEND_DONE:
-                setStep(stepPayload, ST_DONE, "2", "GhostPad sent to your PS5",
-                        "PS5 at " + sendIp, "Resend", v -> confirmSend());
-                break;
-            default:
-                if (linked) {
-                    setStep(stepPayload, ST_DONE, "2", "GhostPad is running on your PS5",
-                            "It was already running.", "Resend", v -> confirmSend());
-                } else {
-                    setStep(stepPayload, ST_PENDING, "2", "Send GhostPad to your PS5",
-                            "Open the ELF loader on your PS5 first.", "Send", v -> confirmSend());
-                }
+        // Step 2: payload on the chosen console
+        Console active = app.getActiveConsole();
+        if (active == null) {
+            setStep(stepPayload, ST_PENDING, "2", "Choose your console",
+                    "Scan your network to find your PS4 or PS5.",
+                    "Choose", v -> open(ConsolesActivity.class));
+        } else {
+            String cname = active.displayName();
+            switch (send) {
+                case GamepadBridgeApp.SEND_SEARCHING:
+                    setStep(stepPayload, ST_WORKING, "2", "Looking for your console…",
+                            "Searching your network for the ELF loader.", null, null);
+                    break;
+                case GamepadBridgeApp.SEND_SENDING:
+                    setStep(stepPayload, ST_WORKING, "2", "Sending GhostPad to " + cname + "…",
+                            active.typeLabel() + " at " + sendIp, null, null);
+                    break;
+                case GamepadBridgeApp.SEND_FAILED:
+                    setStep(stepPayload, ST_ERROR, "2", "Couldn't send to " + cname,
+                            app.getSendDetail(), "Try again", v -> confirmSend());
+                    break;
+                case GamepadBridgeApp.SEND_DONE:
+                    setStep(stepPayload, ST_DONE, "2", "GhostPad sent to " + cname,
+                            active.typeLabel() + " at " + active.address, "Resend", v -> confirmSend());
+                    break;
+                default:
+                    if (linked) {
+                        setStep(stepPayload, ST_DONE, "2", "GhostPad is running on " + cname,
+                                "It was already running.", "Resend", v -> confirmSend());
+                    } else {
+                        setStep(stepPayload, ST_PENDING, "2", "Send GhostPad to " + cname,
+                                "Open the ELF loader on it first.", "Send", v -> confirmSend());
+                    }
+            }
         }
 
-        // Step 3: PS5 connects back to the phone
+        // Step 3: the console connects back to the phone
         if (!server.isRunning()) {
-            setStep(stepLink, ST_ERROR, "3", "This phone can't accept the PS5",
+            setStep(stepLink, ST_ERROR, "3", "This phone can't accept the console",
                     "Port " + PadServer.PORT + " is in use. Force-stop the app and open it again.",
                     null, null);
         } else if (linked) {
-            setStep(stepLink, ST_DONE, "3", "PS5 connected",
+            setStep(stepLink, ST_DONE, "3", "Console connected",
                     "Sending controller input to " + server.getClientIp(), null, null);
         } else if (send == GamepadBridgeApp.SEND_DONE) {
-            setStep(stepLink, ST_WORKING, "3", "Waiting for the PS5 to connect…",
+            setStep(stepLink, ST_WORKING, "3", "Waiting for the console to connect…",
                     "This usually takes a few seconds.", null, null);
         } else {
-            setStep(stepLink, ST_PENDING, "3", "PS5 connects on its own",
-                    "Once GhostPad is running, the PS5 finds this phone automatically.", null, null);
+            setStep(stepLink, ST_PENDING, "3", "The console connects on its own",
+                    "Once GhostPad is running, it finds this phone automatically.", null, null);
         }
 
         banner.setVisibility(linked && pad != null ? View.VISIBLE : View.GONE);
@@ -196,10 +201,16 @@ public class MainActivity extends PadActivity {
     }
 
     private void confirmSend() {
+        Console active = app.getActiveConsole();
+        if (active == null) {
+            open(ConsolesActivity.class);
+            return;
+        }
+        String name = active.displayName();
         new AlertDialog.Builder(this)
-                .setTitle("Send GhostPad to your PS5?")
-                .setMessage("This replaces any payload that's running on your PS5 right now. "
-                        + "Make sure the ELF loader is open on the PS5 first.")
+                .setTitle("Send GhostPad to " + name + "?")
+                .setMessage("This replaces any payload running on " + name + " right now. "
+                        + "Make sure the ELF loader is open on it first.")
                 .setPositiveButton("Send", (d, w) -> app.sendPayload())
                 .setNegativeButton("Cancel", null)
                 .show();

@@ -17,6 +17,10 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".ConsolesActivity"
+            android:exported="false"
+            android:label="Consoles" />
+        <activity
             android:name=".MappingActivity"
             android:exported="false"
             android:label="Button mapping" />

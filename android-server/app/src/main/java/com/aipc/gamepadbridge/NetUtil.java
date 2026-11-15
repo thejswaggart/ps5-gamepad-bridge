@@ -64,10 +64,11 @@ public final class NetUtil {
     }
 
     /**
-     * Sweep base.1 - base.254 for an open port. Blocking (a few seconds);
-     * call off the main thread. Returns the lowest matching address, or null.
+     * Sweep base.1 - base.254 for an open port and return every matching
+     * address, in ascending host order. Blocking (a few seconds); call off
+     * the main thread.
      */
-    public static String findFirstOpen(String base, int port) {
+    public static java.util.List<String> findAllOpen(String base, int port) {
         ConcurrentSkipListSet<Integer> found = new ConcurrentSkipListSet<>();
         ExecutorService pool = Executors.newFixedThreadPool(32);
         for (int i = 1; i <= 254; i++) {
@@ -81,6 +82,25 @@ public final class NetUtil {
             pool.awaitTermination(30, TimeUnit.SECONDS);
         } catch (InterruptedException ignored) {
         }
-        return found.isEmpty() ? null : base + "." + found.first();
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (int h : found) out.add(base + "." + h);
+        return out;
+    }
+
+    /**
+     * Reverse-DNS a LAN address to a short hostname ("PS5", "ps4pro"), or
+     * null when it can't be resolved. Blocking; call off the main thread.
+     */
+    public static String hostnameOf(String ip) {
+        try {
+            InetAddress a = InetAddress.getByName(ip);
+            String name = a.getCanonicalHostName();
+            if (name != null && !name.equals(ip)) {
+                int dot = name.indexOf('.');
+                return dot > 0 ? name.substring(0, dot) : name;
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
     }
 }

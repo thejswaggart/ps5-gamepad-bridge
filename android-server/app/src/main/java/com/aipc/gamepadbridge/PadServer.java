@@ -40,6 +40,8 @@ public final class PadServer {
     private volatile boolean running = false;
     private volatile boolean clientConnected = false;
     private volatile String clientIp = "";
+    /** When set, only this console's IP is accepted; others are refused. */
+    private volatile String allowedClientIp;
     private Thread thread;
     private Socket clientSocket;
 
@@ -60,6 +62,26 @@ public final class PadServer {
 
     public void setRumbleListener(RumbleListener l) {
         this.rumbleListener = l;
+    }
+
+    /**
+     * Restrict the server to one console's IP. null accepts any dialer (the
+     * behaviour when no console has been chosen yet). Setting this does not
+     * drop a console already connected — call {@link #disconnectClient()}
+     * for that when switching.
+     */
+    public void setAllowedClientIp(String ip) {
+        this.allowedClientIp = ip;
+    }
+
+    public String getAllowedClientIp() {
+        return allowedClientIp;
+    }
+
+    /** Drop the current console so a switch to another takes effect now. */
+    public void disconnectClient() {
+        Socket c = clientSocket;
+        if (c != null) closeQuietly(c);
     }
 
     public boolean isRunning() {
@@ -123,9 +145,17 @@ public final class PadServer {
                     closeQuietly(c);
                     break;
                 }
+                String ip = remoteIp(c);
+                String allowed = allowedClientIp;
+                if (allowed != null && !allowed.equals(ip)) {
+                    // A different console is active; don't let this one in.
+                    Log.i(TAG, "refused " + ip + " (active console is " + allowed + ")");
+                    closeQuietly(c);
+                    continue;
+                }
                 clientSocket = c;
                 clientConnected = true;
-                clientIp = remoteIp(c);
+                clientIp = ip;
                 Log.i(TAG, "client connected: " + clientIp);
                 notifyStatus();
                 Thread reader = new Thread(() -> readClient(c), "PadServer-rx");
