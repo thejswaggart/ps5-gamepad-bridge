@@ -11,7 +11,7 @@
 # with e.g. PS5_PAYLOAD_SDK=/other/path make ps5
 
 PS5_HOST  ?= PS5
-PS4_HOST  ?= PS4
+PS4_HOST  ?= ps4pro
 PS5_PORT  ?= 9021
 PS4_PORT  ?= 9090
 
