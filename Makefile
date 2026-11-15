@@ -16,8 +16,7 @@
 # with e.g. PS5_PAYLOAD_SDK=/other/path make ps5
 
 ANDROID_DIR := android-server
-PS5_DIR     := ps5-client
-PS4_DIR     := ps4-client
+CLIENT_DIR  := client
 PS5_PAYLOAD_SDK ?= /home/aipc/projects/ps5-payload-sdk
 PS4_PAYLOAD_SDK ?= /home/aipc/projects/ps4-payload-sdk
 export PS5_PAYLOAD_SDK PS4_PAYLOAD_SDK
@@ -28,15 +27,15 @@ all: android
 
 android: ps5 ps4
 	@mkdir -p $(ANDROID_DIR)/app/src/main/assets
-	cp -f $(PS5_DIR)/ghostpad-net.elf $(ANDROID_DIR)/app/src/main/assets/
-	cp -f $(PS4_DIR)/ps4-ghostpad.elf $(ANDROID_DIR)/app/src/main/assets/
+	cp -f $(CLIENT_DIR)/ps5-client.elf $(ANDROID_DIR)/app/src/main/assets/
+	cp -f $(CLIENT_DIR)/ps4-client.elf $(ANDROID_DIR)/app/src/main/assets/
 	cd $(ANDROID_DIR) && ./gradlew assembleDebug
 
 ps5:
-	cd $(PS5_DIR) && $(MAKE)
+	cd $(CLIENT_DIR) && $(MAKE) ps5
 
 ps4:
-	cd $(PS4_DIR) && $(MAKE)
+	cd $(CLIENT_DIR) && $(MAKE) ps4
 
 clean: clean-android clean-ps5 clean-ps4
 
@@ -44,13 +43,13 @@ clean-android:
 	cd $(ANDROID_DIR) && ./gradlew clean
 
 clean-ps5:
-	cd $(PS5_DIR) && $(MAKE) clean
+	cd $(CLIENT_DIR) && rm -f ps5-client.elf
 
 clean-ps4:
-	cd $(PS4_DIR) && $(MAKE) clean
+	cd $(CLIENT_DIR) && rm -f ps4-client.elf
 
 deploy: ps5
-	cd $(PS5_DIR) && $(MAKE) deploy
+	cd $(CLIENT_DIR) && $(MAKE) deploy
 
 deploy-ps4: ps4
-	cd $(PS4_DIR) && $(MAKE) deploy
+	cd $(CLIENT_DIR) && $(MAKE) deploy-ps4

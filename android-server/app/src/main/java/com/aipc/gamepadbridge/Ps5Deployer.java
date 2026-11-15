@@ -9,12 +9,12 @@ import java.net.Socket;
 
 /**
  * Deploys the bundled PS5 payload to an ELF loader, exactly the way
- * `nc <host> <port> < ghostpad-net.elf` does: open a TCP connection,
+ * `nc <host> <port> < ps5-client.elf` does: open a TCP connection,
  * stream the raw ELF bytes, then close (EOF).
  */
 public class Ps5Deployer {
 
-    public static final String ASSET = "ghostpad-net.elf";
+    public static final String ASSET = "ps5-client.elf";
     private static final int CONNECT_TIMEOUT_MS = 8000; // nc -w 8
 
     /** Read the bundled payload from assets into memory. */

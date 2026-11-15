@@ -2,7 +2,7 @@ package com.aipc.gamepadbridge;
 
 /**
  * 32-byte little-endian PadFrame wire format.
- * Mirrors ghostpad-net/padframe.h — the shared contract between this app
+ * Mirrors client/padframe.h — the shared contract between this app
  * (TCP server, produces frames) and the PS5 payload (TCP client).
  *
  *   off  sz  field

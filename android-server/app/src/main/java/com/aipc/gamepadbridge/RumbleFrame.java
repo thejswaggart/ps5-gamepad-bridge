@@ -2,7 +2,7 @@ package com.aipc.gamepadbridge;
 
 /**
  * 8-byte little-endian RumbleFrame, sent PS5 -> phone on the PadFrame
- * connection. Mirrors ps5-client/padframe.h; keep them in lockstep.
+ * connection. Mirrors client/padframe.h; keep them in lockstep.
  *
  *   off  sz  field
  *   0    4   magic   = 0x4C424D52 ("RMBL" LE)

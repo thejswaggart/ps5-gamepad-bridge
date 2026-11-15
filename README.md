@@ -8,7 +8,7 @@ just a TCP connection across your network.
 
 ```
   [ phone: external pad ]              [ PS5 (jailbroken) ]
-  Gamepad Bridge app                   ghostpad-net.elf payload
+  Gamepad Bridge app                   ps5-client.elf payload
   ┌──────────────────────────┐         ┌───────────────────────────────┐
   │ PadMapper (Xbox keycodes) │         │ virtual DualSense (VDI path)  │
   │           │                │         │           ▲                  │
@@ -32,7 +32,7 @@ Two halves talk over a single TCP connection:
   lock the phone, or let the screen turn off. (The `PARTIAL_WAKE_LOCK` keeps
   the socket alive, but no input arrives.) Use **Play mode** to dim the
   screen to near-black while you play.
-- **PS5 = the controller injector (TCP *client*).** The `ghostpad-net.elf`
+- **PS5 = the controller injector (TCP *client*).** The `ps5-client.elf`
   payload creates a **virtual DualSense** and injects the received input with
   `scePadVirtualDeviceInsertData` (the "Ghostpad VDI path"). It
   **auto-discovers** the phone by sweeping the local `/24` for an open
@@ -95,7 +95,7 @@ motor over Bluetooth or USB; a USB GameCube-style pad rumbles. For bench
 testing without a PS5, `test_client.py <phone-ip> 8471 0 rumble` sends
 RumbleFrames like the payload does.
 
-Shared contract: `ps5-client/padframe.h` (PS5) ↔
+Shared contract: `client/padframe.h` (PS5 + PS4) ↔
 `android-server/.../PadFrame.java` and `RumbleFrame.java` (phone). Keep them
 in lockstep.
 
@@ -121,21 +121,24 @@ in lockstep.
 From the repo root:
 
 ```sh
-make            # build the PS5 payload, then the Android app (default)
-make ps5        # PS5 payload only  -> ps5-client/ghostpad-net.elf
-make android    # payload + bundle ELF into the APK + ./gradlew assembleDebug
+make            # build the payloads, then the Android app (default)
+make ps5        # PS5 payload only  -> client/ps5-client.elf
+make ps4        # PS4 payload only  -> client/ps4-client.elf
+make android    # payloads + bundle ELFs into the APK + ./gradlew assembleDebug
 make deploy     # build + push the payload to the PS5 (nc-style)
 make clean      # clean both
 ```
 
-- `make android` builds the payload first, copies
-  `ps5-client/ghostpad-net.elf` into
+- `make android` builds the payloads first, copies
+  `client/ps5-client.elf` and `client/ps4-client.elf` into
   `android-server/app/src/main/assets/`, then runs
   `./gradlew assembleDebug` in `android-server/`.
 - The PS5 payload is compiled with the SDK's `prospero.mk`
   (`-D__PROSPERO__ -Wall -Wextra -g -O2 -fPIC -fno-stack-protector`), linking
-  `-lScePad -lSceUserService -lpthread -ldl`.
-- The SDK path defaults to `/home/aipc/projects/PS5_PayloadSDK`; override with
+  `-lScePad -lSceUserService -lpthread -ldl`; the PS4 payload uses the
+  `orbis.mk` toolchain and `-D__ORBIS__` (same source tree, `client/`).
+- The SDK paths default to `/home/aipc/projects/ps5-payload-sdk` and
+  `/home/aipc/projects/ps4-payload-sdk`; override with e.g.
   `PS5_PAYLOAD_SDK=/other/path make ps5`.
 - The Android APK lands in
   `android-server/app/build/outputs/apk/debug/`.
@@ -146,14 +149,14 @@ The payload is delivered exactly the way `nc` does it — open a TCP connection
 to the ELF loader, stream the raw ELF bytes, then close (EOF):
 
 ```sh
-nc -w 8 <ps5-ip> 9021 < ps5-client/ghostpad-net.elf
+nc -w 8 <ps5-ip> 9021 < client/ps5-client.elf
 # or:  make deploy        (PS5_HOST defaults to "PS5")
 ```
 
 Or from the app: open **Gamepad Bridge** and tap **Send** on step 2. It tries
 the address under **Advanced** (if set), then the last PS5 that worked, then
 sweeps the `/24` for an open `:9021` (`NetUtil`), and streams the bundled
-`ghostpad-net.elf` asset.
+`ps5-client.elf` asset.
 
 > Deploying **replaces** whatever the PS5 is currently running. Confirm what's
 > live before you deploy.
@@ -207,7 +210,7 @@ phone_port = 8471
 ```
 ps5-gamepad-bridge/
 ├─ Makefile                          # top-level: android / ps5 / deploy
-├─ ps5-client/                      # PS5 payload (x86-64 ELF)
+├─ client/                           # PS5 + PS4 payload (x86-64 ELF), one tree
 │  ├─ gc_main.c                     #   main: config, LAN scan, TCP client, VDI
 │  ├─ rumble_out.c / .h            #   reads game rumble, sends RumbleFrames back
 │  ├─ shellui_pad.c / .h           #   shell UI / pad glue

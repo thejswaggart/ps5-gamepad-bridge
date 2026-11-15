@@ -103,7 +103,9 @@ typedef struct {
     volatile int32_t handle;        /* VDA handle, -1 = not ready */
     volatile int     vdi_ready;
     volatile uint32_t inject_count;
+#ifdef __ORBIS__
     volatile int     vda_gave_up;  /* set when no handle could be obtained */
+#endif
 } ctrl_slot_t;
 
 static ctrl_slot_t     g_slots[MAX_SLOTS];
@@ -115,11 +117,13 @@ static uint64_t        g_klog_q[KLOG_QSIZE];
 static int             g_klog_qw = 0, g_klog_qr = 0;
 static pthread_mutex_t g_klog_lock = PTHREAD_MUTEX_INITIALIZER;
 
+#ifdef __ORBIS__
 /* Set once the klog thread has drained the ring-buffer backlog (see
  * klog_capture_thread): only then is a DEVICE_ADDED line one we created,
  * not a stale one from boot. create_vda_for_slot waits for this before
  * calling scePadVirtualDeviceAddDevice. */
 static volatile int g_klog_drained = 0;
+#endif
 
 static void klog_enqueue(uint64_t id) {
     pthread_mutex_lock(&g_klog_lock);
@@ -172,7 +176,12 @@ static uint64_t parse_hex_str(const char *s) {
  * so match the PS4 strings. */
 static void parse_klog_line(const char *line) {
     if (!strstr(line, "DEVICE_ADDED"))        return;
+#ifdef __ORBIS__
     if (!strstr(line, "subType:2"))           return;
+#else
+    if (!strstr(line, "subType:22"))          return;
+    if (!strstr(line, "capabilityBattery:0")) return;
+#endif
     const char *p = strstr(line, "DeviceId:0x");
     if (!p) p = strstr(line, "deviceId=0x");
     if (!p) return;
@@ -202,6 +211,7 @@ static void *klog_capture_thread(void *arg) {
         }
         if (fd<0){close(sock);return NULL;}
     }
+#ifdef __ORBIS__
     /* Drain the klog backlog before capturing: the stream (the TCP
      * 127.0.0.1:3232 bridge, or /dev/klog) replays the whole ring buffer
      * from boot, which can contain DEVICE_ADDED lines for virtual pads
@@ -213,6 +223,7 @@ static void *klog_capture_thread(void *arg) {
     gp_log("klog: draining backlog\n");
     gp_log("KLOG-DRAIN\n");
     int drained = 0;
+#endif
     while (1) {
         ssize_t len = read(fd, buf, sizeof(buf));
         if (len < 0) { if (errno==EINTR) continue; break; }
@@ -221,6 +232,7 @@ static void *klog_capture_thread(void *arg) {
             char c = buf[i];
             if (c=='\n'||line_len>=sizeof(line)-1){
                 line[line_len]='\0';
+#ifdef __ORBIS__
                 if (!drained) {
                     if (strstr(line, "[GC] KLOG-DRAIN")) {
                         drained = 1;
@@ -230,6 +242,9 @@ static void *klog_capture_thread(void *arg) {
                 } else {
                     parse_klog_line(line);
                 }
+#else
+                parse_klog_line(line);
+#endif
                 line_len=0;
             }
             else if (c!='\r') line[line_len++]=c;
@@ -583,7 +598,11 @@ static void *tcp_client(void *arg) {
                 /* Pad connected: make sure the virtual device exists, then
                  * stream its data. Creation is what makes the PS5 show a
                  * controller (the connected field alone is not honored). */
+#ifdef __ORBIS__
                 if (!g_slots[0].vdi_ready && !g_slots[0].vda_gave_up) {
+#else
+                if (!g_slots[0].vdi_ready) {
+#endif
                     int32_t h = create_vda_for_slot(0);
                     if (h >= 0) {
                         g_slots[0].handle       = h;
@@ -591,11 +610,15 @@ static void *tcp_client(void *arg) {
                         g_slots[0].inject_count = 0;
                         rumble_out_set_handle(h);
                     } else {
+#ifdef __ORBIS__
                         /* create_vda_for_slot set vda_gave_up (no handle);
                          * do NOT retry next frame (would orphan another
                          * device we can't address). */
                         if (g_slots[0].vda_gave_up)
                             gp_log("tcp: VDA gave up (no handle); not retrying\n");
+#else
+                        gp_log("tcp: VDA create failed (retry next frame)\n");
+#endif
                     }
                 }
                 if (g_slots[0].vdi_ready) {
@@ -677,6 +700,7 @@ static int32_t create_vda_for_slot(int slot) {
     if (handle>=0) {
         gp_log("slot[%d] VDI handle=0x%x ready\n", slot, (uint32_t)handle);
     } else {
+#ifdef __ORBIS__
         /* No handle at all: on PS4 the device IS created (VDA returned
          * 0x803b0006) but we have no DeviceId to address it. Do NOT retry:
          * a retry creates another orphaned device we can't address, and
@@ -687,6 +711,9 @@ static int32_t create_vda_for_slot(int slot) {
          * behind that it can no longer address.") */
         g_slots[slot].vda_gave_up = 1;
         gp_log("slot[%d] ERROR: no VDA handle - NOT retrying (avoids orphaned devices)\n", slot);
+#else
+        gp_log("slot[%d] ERROR: no VDA handle\n", slot);
+#endif
     }
     return handle;
 }
@@ -746,7 +773,9 @@ int main(void) {
     g_slots[0].handle       = -1;
     g_slots[0].vdi_ready    = 0;
     g_slots[0].inject_count = 0;
+#ifdef __ORBIS__
     g_slots[0].vda_gave_up  = 0;
+#endif
 
     sceUserServiceInitialize(NULL);
     sceUserServiceGetInitialUser(&userId);
