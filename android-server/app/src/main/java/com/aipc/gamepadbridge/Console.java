@@ -46,12 +46,13 @@ public final class Console {
         this.loaderPort = loaderPort;
     }
 
-    /** Best label: user nickname, else the console's own name, else the
-     *  reverse-DNS hostname, else the address. */
+    /** Best label: user nickname, else a deliberately-set reverse-DNS
+     *  hostname, else the console's own name (the common case, when no
+     *  hostname is set), else the address. */
     public String displayName() {
         if (nickname != null && !nickname.isEmpty()) return nickname;
-        if (name != null && !name.isEmpty()) return name;
         if (hostname != null && !hostname.isEmpty()) return hostname;
+        if (name != null && !name.isEmpty()) return name;
         return address;
     }
 
