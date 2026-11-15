@@ -118,7 +118,7 @@ _Static_assert(sizeof(RumbleFrame) == RUMBLEFRAME_SIZE,
                "RumbleFrame must be exactly 8 bytes");
 
 /*
- * HelloFrame — 60 bytes, little-endian, sent PS4/PS5 -> phone ONCE right
+ * HelloFrame — 92 bytes, little-endian, sent PS4/PS5 -> phone ONCE right
  * after the payload connects, on the same TCP connection, before (and
  * alongside) the PadFrame / RumbleFrame streams. It gives the console a
  * durable identity (its Wi-Fi MAC) so the phone keeps recognising it across
@@ -134,16 +134,17 @@ _Static_assert(sizeof(RumbleFrame) == RUMBLEFRAME_SIZE,
  *   5    1   type     1 = PS4, 2 = PS5 (matches Console.TYPE_PS4/PS5)
  *   6    6   mac      Wi-Fi MAC, 6 bytes; all-zero if unavailable
  *  12   16  firmware ASCII, NUL-padded/terminated; empty if unavailable
- *  28   32  name     ASCII console name, NUL-padded/terminated
- *   -> total 60
+ *  28   64  name     ASCII console name (Settings > System name),
+ *                    NUL-padded/terminated
+ *   -> total 92
  */
 #define HELLOFRAME_MAGIC   0x49485047u   /* "GPHI" read as a little-endian u32 */
-#define HELLOFRAME_SIZE    60u
+#define HELLOFRAME_SIZE    92u
 #define HELLOFRAME_VERSION 1u
 #define HELLO_TYPE_PS4     1u
 #define HELLO_TYPE_PS5     2u
 #define HELLO_FW_LEN       16u
-#define HELLO_NAME_LEN     32u
+#define HELLO_NAME_LEN     64u
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -155,4 +156,4 @@ typedef struct __attribute__((packed)) {
 } HelloFrame;
 
 _Static_assert(sizeof(HelloFrame) == HELLOFRAME_SIZE,
-               "HelloFrame must be exactly 60 bytes");
+               "HelloFrame must be exactly 92 bytes");

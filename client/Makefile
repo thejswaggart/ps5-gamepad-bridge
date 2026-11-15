@@ -44,11 +44,11 @@ deploy-ps4: ps4
 ifeq ($(PLATFORM),ps5)
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 CFLAGS  += -D__PROSPERO__ -Wall -Wextra -g -O2 -fPIC -fno-stack-protector
-LDFLAGS += -lScePad -lSceUserService -lpthread -ldl
+LDFLAGS += -lScePad -lSceUserService -lSceSystemService -lpthread -ldl
 else ifeq ($(PLATFORM),ps4)
 include $(PS4_PAYLOAD_SDK)/toolchain/orbis.mk
 CFLAGS  += -D__ORBIS__ -Wall -Wextra -g -O2 -fPIC -fno-stack-protector
-LDFLAGS += -lScePad -lSceUserService -lpthread -ldl
+LDFLAGS += -lScePad -lSceUserService -lSceSystemService -lpthread -ldl
 else
 $(if $(PLATFORM),$(error PLATFORM must be ps5 or ps4))
 endif

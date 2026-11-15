@@ -16,13 +16,13 @@ import java.nio.charset.StandardCharsets;
  *   5    1   type     u8 1=PS4, 2=PS5 (matches Console.TYPE_PS4/PS5)
  *   6    6   mac      Wi-Fi MAC; all-zero if unavailable
  *  12   16  firmware ASCII, NUL-padded; empty if unavailable
- *  28   32  name     ASCII console name, NUL-padded
+ *  28   64  name     ASCII console name (Settings > System name), NUL-padded
  */
 public final class HelloFrame {
     public static final int MAGIC = 0x49485047; // "GPHI"
-    public static final int SIZE = 60;
+    public static final int SIZE = 92;
     public static final int FW_LEN = 16;
-    public static final int NAME_LEN = 32;
+    public static final int NAME_LEN = 64;
 
     public int version;
     public int type;               // 1=PS4, 2=PS5, 0=unknown

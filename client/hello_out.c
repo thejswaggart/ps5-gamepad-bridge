@@ -14,6 +14,7 @@
 #include "padframe.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -28,6 +29,22 @@
 
 extern int getifaddrs(struct ifaddrs **) __attribute__((weak));
 extern void freeifaddrs(struct ifaddrs *) __attribute__((weak));
+
+/* Console name as set in Settings > System > "<console> name". Both the PS4
+ * (orbis) and PS5 (prospero) SystemService stubs export this; weak so a
+ * toolchain without it still links (we then fall back to gethostname). */
+extern int sceSystemServiceParamGetString(int paramId, char *buf,
+                                          unsigned long bufSize) __attribute__((weak));
+#define SCE_SYSTEM_PARAM_ID_SYSTEM_NAME 6
+
+/* System software version. The struct is { uint64_t size (in); char
+ * str[0x1C] (out, e.g. "09.000.000"); uint32_t version (out) }; set size
+ * before the call. Weak so the link doesn't fail if a stub is missing. */
+extern int sceKernelGetSystemSwVersion(void *v) __attribute__((weak));
+#ifdef __PROSPERO__
+extern int sceKernelGetProsperoSystemSwVersion(void *v) __attribute__((weak));
+#endif
+typedef struct { uint64_t size; char str[0x1C]; uint32_t version; } sw_version_t;
 
 extern void ghostpad_status_log(const char *fmt, ...);
 #define ho_log(...) ghostpad_status_log("[hello] " __VA_ARGS__)
@@ -58,20 +75,56 @@ static int get_wifi_mac(uint8_t out[6])
     return found;
 }
 
-/* Best-effort firmware string. The PS4/PS5 payload SDKs in this tree don't
- * expose a verified system-software-version API, so this is left empty for
- * now rather than risk calling an unknown symbol. The phone treats an empty
- * firmware field as "unknown" and simply doesn't show it.
- * TODO: wire to the SDK's firmware query (e.g. sceKernelGetSystemSwVersion
- * on PS4) once its struct layout is confirmed on hardware. */
-static void get_firmware(char *out, size_t n)
+/* True if s looks like a printable version string ("09.000.000"). */
+static int printable_ver(const char *s)
 {
-    if (n) out[0] = '\0';
+    return s[0] >= 0x20 && (unsigned char)s[0] < 0x7f;
 }
 
+/* Best-effort firmware / system-software version. On PS5 the Prospero query
+ * gives the real console version; both platforms also have the PS4-style
+ * query as a fallback. Left empty on failure (phone shows nothing). */
+static void get_firmware(char *out, size_t n)
+{
+    if (!n) return;
+    out[0] = '\0';
+    sw_version_t sw;
+
+#ifdef __PROSPERO__
+    if (sceKernelGetProsperoSystemSwVersion) {
+        memset(&sw, 0, sizeof(sw));
+        sw.size = sizeof(sw);
+        sceKernelGetProsperoSystemSwVersion(&sw);
+        sw.str[sizeof(sw.str) - 1] = '\0';
+        if (printable_ver(sw.str)) { snprintf(out, n, "%s", sw.str); out[n-1]='\0'; return; }
+    }
+#endif
+    if (sceKernelGetSystemSwVersion) {
+        memset(&sw, 0, sizeof(sw));
+        sw.size = sizeof(sw);
+        sceKernelGetSystemSwVersion(&sw);
+        sw.str[sizeof(sw.str) - 1] = '\0';
+        if (printable_ver(sw.str)) { snprintf(out, n, "%s", sw.str); out[n-1]='\0'; }
+    }
+}
+
+/* The console's user-facing name (Settings > System name), which lets the
+ * phone tell consoles apart even when none has a reverse-DNS hostname. Falls
+ * back to gethostname() if the system-param call is missing or fails. */
 static void get_name(char *out, size_t n)
 {
     if (!n) return;
+    out[0] = '\0';
+    if (sceSystemServiceParamGetString) {
+        char sys[128];
+        sys[0] = '\0';
+        if (sceSystemServiceParamGetString(SCE_SYSTEM_PARAM_ID_SYSTEM_NAME,
+                                           sys, sizeof(sys)) == 0 && sys[0]) {
+            snprintf(out, n, "%s", sys);
+            out[n - 1] = '\0';
+            return;
+        }
+    }
     if (gethostname(out, n) != 0) out[0] = '\0';
     out[n - 1] = '\0';
 }

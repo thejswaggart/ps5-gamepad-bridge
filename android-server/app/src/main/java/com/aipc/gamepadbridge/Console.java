@@ -23,6 +23,9 @@ public final class Console {
     public String mac;
     /** Firmware string from the handshake, or null. */
     public String firmware;
+    /** The console's own name (Settings &gt; System name) from the handshake,
+     *  or null. Lets the user tell consoles apart without a hostname. */
+    public String name;
     /** Reverse-DNS name ("PS5", "ps4pro"), or null. */
     public String hostname;
     /** PS4 / PS5 / unknown. Decides which payload is deployed. */
@@ -43,9 +46,11 @@ public final class Console {
         this.loaderPort = loaderPort;
     }
 
-    /** Best label to show: nickname, else hostname, else the address. */
+    /** Best label: user nickname, else the console's own name, else the
+     *  reverse-DNS hostname, else the address. */
     public String displayName() {
         if (nickname != null && !nickname.isEmpty()) return nickname;
+        if (name != null && !name.isEmpty()) return name;
         if (hostname != null && !hostname.isEmpty()) return hostname;
         return address;
     }
@@ -71,6 +76,7 @@ public final class Console {
         o.put("address", address);
         o.put("mac", mac);             // null drops the key
         o.put("firmware", firmware);   // null drops the key
+        o.put("name", name);           // null drops the key
         o.put("hostname", hostname);   // null drops the key
         o.put("type", type);
         o.put("nickname", nickname);   // null drops the key
@@ -83,6 +89,7 @@ public final class Console {
         Console c = new Console(o.optString("address", null));
         c.mac = o.has("mac") ? o.optString("mac", null) : null;
         c.firmware = o.has("firmware") ? o.optString("firmware", null) : null;
+        c.name = o.has("name") ? o.optString("name", null) : null;
         c.hostname = o.has("hostname") ? o.optString("hostname", null) : null;
         c.type = o.optInt("type", TYPE_UNKNOWN);
         c.nickname = o.has("nickname") ? o.optString("nickname", null) : null;

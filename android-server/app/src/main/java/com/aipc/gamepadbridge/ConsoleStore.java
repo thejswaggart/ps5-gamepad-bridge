@@ -119,6 +119,7 @@ public final class ConsoleStore {
             if (byAddr != null && byAddr != byMac) {
                 // Merge the IP-only entry at this address into the MAC entry.
                 if (target.nickname == null) target.nickname = byAddr.nickname;
+                if (target.name == null) target.name = byAddr.name;
                 if (target.hostname == null) target.hostname = byAddr.hostname;
                 if (byAddr.loaderPort > 0) target.loaderPort = byAddr.loaderPort;
                 if (byAddr.lastSeenMs > target.lastSeenMs)
@@ -135,10 +136,7 @@ public final class ConsoleStore {
 
         if (mac != null) target.mac = mac;
         if (firmware != null && !firmware.isEmpty()) target.firmware = firmware;
-        if (name != null && !name.isEmpty()
-                && (target.hostname == null || target.hostname.isEmpty())) {
-            target.hostname = name; // the console's own reported name
-        }
+        if (name != null && !name.isEmpty()) target.name = name; // console's own name
         if (type != Console.TYPE_UNKNOWN) target.type = type; // prefer handshake
         if (target.lastSeenMs == 0) target.lastSeenMs = System.currentTimeMillis();
         save();
