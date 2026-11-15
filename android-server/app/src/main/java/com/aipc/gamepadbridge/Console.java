@@ -5,9 +5,10 @@ import org.json.JSONObject;
 
 /**
  * A PlayStation on the LAN that the app can deploy a payload to and stream
- * controller input to. Identified by its IPv4 address (phase 1); a future
- * handshake will add firmware / MAC so a DHCP address change doesn't lose
- * the console's identity.
+ * controller input to. Identified by its IPv4 address when that's all we
+ * know (phase 1); once the payload sends a {@link HelloFrame} its Wi-Fi MAC
+ * becomes the durable key, so a DHCP address change no longer loses the
+ * console's identity (phase 2).
  */
 public final class Console {
 
@@ -15,8 +16,16 @@ public final class Console {
     public static final int TYPE_PS4 = 1;
     public static final int TYPE_PS5 = 2;
 
-    /** IPv4 address; the stable key for a console in phase 1. */
+    /** IPv4 address; the stable key only until a MAC is learned. */
     public String address;
+    /** Wi-Fi MAC "aa:bb:cc:dd:ee:ff" from the handshake; the durable key
+     *  across DHCP address changes once known, or null. */
+    public String mac;
+    /** Firmware string from the handshake, or null. */
+    public String firmware;
+    /** The console's own name (Settings &gt; System name) from the handshake,
+     *  or null. Lets the user tell consoles apart without a hostname. */
+    public String name;
     /** Reverse-DNS name ("PS5", "ps4pro"), or null. */
     public String hostname;
     /** PS4 / PS5 / unknown. Decides which payload is deployed. */
@@ -37,10 +46,13 @@ public final class Console {
         this.loaderPort = loaderPort;
     }
 
-    /** Best label to show: nickname, else hostname, else the address. */
+    /** Best label: user nickname, else a deliberately-set reverse-DNS
+     *  hostname, else the console's own name (the common case, when no
+     *  hostname is set), else the address. */
     public String displayName() {
         if (nickname != null && !nickname.isEmpty()) return nickname;
         if (hostname != null && !hostname.isEmpty()) return hostname;
+        if (name != null && !name.isEmpty()) return name;
         return address;
     }
 
@@ -63,6 +75,9 @@ public final class Console {
     public JSONObject toJson() throws JSONException {
         JSONObject o = new JSONObject();
         o.put("address", address);
+        o.put("mac", mac);             // null drops the key
+        o.put("firmware", firmware);   // null drops the key
+        o.put("name", name);           // null drops the key
         o.put("hostname", hostname);   // null drops the key
         o.put("type", type);
         o.put("nickname", nickname);   // null drops the key
@@ -73,6 +88,9 @@ public final class Console {
 
     public static Console fromJson(JSONObject o) {
         Console c = new Console(o.optString("address", null));
+        c.mac = o.has("mac") ? o.optString("mac", null) : null;
+        c.firmware = o.has("firmware") ? o.optString("firmware", null) : null;
+        c.name = o.has("name") ? o.optString("name", null) : null;
         c.hostname = o.has("hostname") ? o.optString("hostname", null) : null;
         c.type = o.optInt("type", TYPE_UNKNOWN);
         c.nickname = o.has("nickname") ? o.optString("nickname", null) : null;

@@ -74,6 +74,12 @@ public final class ConsoleStore {
         return null;
     }
 
+    public synchronized Console byMac(String mac) {
+        if (mac == null) return null;
+        for (Console c : consoles) if (mac.equalsIgnoreCase(c.mac)) return c;
+        return null;
+    }
+
     /**
      * Add a new console, or refresh the one that already has this address.
      * User-set fields (nickname, a type the user chose) are kept; discovery
@@ -92,6 +98,55 @@ public final class ConsoleStore {
         if (incoming.lastSeenMs > 0) existing.lastSeenMs = incoming.lastSeenMs;
         save();
         return existing;
+    }
+
+    /**
+     * Apply a console's handshake (its {@link HelloFrame}) to the store,
+     * keyed on the durable MAC. If an entry already carries this MAC (even at
+     * a different, now-stale address) it's the same console that changed IP:
+     * its address is updated and any separate IP-only entry for the new
+     * address is merged in and dropped. Handshake fields (mac, firmware, and
+     * the console-reported type) win over the phase-1 hostname guess; a
+     * user-set nickname/type is preserved. Returns the canonical console.
+     */
+    public synchronized Console applyHello(String address, String mac,
+                                           String firmware, String name, int type) {
+        Console byAddr = byAddress(address);
+        Console byMac = byMac(mac);
+        Console target;
+        if (byMac != null) {
+            target = byMac;
+            if (byAddr != null && byAddr != byMac) {
+                // Merge the IP-only entry at this address into the MAC entry.
+                if (target.nickname == null) target.nickname = byAddr.nickname;
+                if (target.name == null) target.name = byAddr.name;
+                if (target.hostname == null) target.hostname = byAddr.hostname;
+                if (byAddr.loaderPort > 0) target.loaderPort = byAddr.loaderPort;
+                if (byAddr.lastSeenMs > target.lastSeenMs)
+                    target.lastSeenMs = byAddr.lastSeenMs;
+                removeEntry(byAddr);
+            }
+            target.address = address;
+        } else if (byAddr != null) {
+            target = byAddr;
+        } else {
+            target = new Console(address);
+            consoles.add(target);
+        }
+
+        if (mac != null) target.mac = mac;
+        if (firmware != null && !firmware.isEmpty()) target.firmware = firmware;
+        if (name != null && !name.isEmpty()) target.name = name; // console's own name
+        if (type != Console.TYPE_UNKNOWN) target.type = type; // prefer handshake
+        if (target.lastSeenMs == 0) target.lastSeenMs = System.currentTimeMillis();
+        save();
+        return target;
+    }
+
+    /** Remove one console object by identity, fixing the active pointer. */
+    private synchronized void removeEntry(Console c) {
+        consoles.remove(c);
+        if (c.address != null && c.address.equals(activeAddress)) activeAddress = null;
     }
 
     public synchronized void remove(String address) {

@@ -123,6 +123,14 @@ public class ConsolesActivity extends PadActivity {
 
         StringBuilder sb = new StringBuilder();
         sb.append(c.typeLabel()).append(" · ").append(c.address);
+        // Show the console's own name here when a nickname is hiding it from
+        // the title, so the user can still tell which physical console it is.
+        if (c.name != null && !c.name.isEmpty() && !c.name.equals(c.displayName())) {
+            sb.append(" · ").append(c.name);
+        }
+        if (c.firmware != null && !c.firmware.isEmpty()) {
+            sb.append(" · fw ").append(c.firmware);
+        }
         if (isActive) {
             boolean sending = sendState == GamepadBridgeApp.SEND_SENDING
                     && c.address.equals(sendIp);

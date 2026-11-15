@@ -44,17 +44,17 @@ deploy-ps4: ps4
 ifeq ($(PLATFORM),ps5)
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 CFLAGS  += -D__PROSPERO__ -Wall -Wextra -g -O2 -fPIC -fno-stack-protector
-LDFLAGS += -lScePad -lSceUserService -lpthread -ldl
+LDFLAGS += -lScePad -lSceUserService -lSceSystemService -lpthread -ldl
 else ifeq ($(PLATFORM),ps4)
 include $(PS4_PAYLOAD_SDK)/toolchain/orbis.mk
 CFLAGS  += -D__ORBIS__ -Wall -Wextra -g -O2 -fPIC -fno-stack-protector
-LDFLAGS += -lScePad -lSceUserService -lpthread -ldl
+LDFLAGS += -lScePad -lSceUserService -lSceSystemService -lpthread -ldl
 else
 $(if $(PLATFORM),$(error PLATFORM must be ps5 or ps4))
 endif
 
-ps5-client.elf: gc_main.c shellui_pad.c rumble_out.c gc_types.h padframe.h shellui_pad.h rumble_out.h
-	$(CC) $(CFLAGS) -o $@ gc_main.c shellui_pad.c rumble_out.c $(LDFLAGS)
+ps5-client.elf: gc_main.c shellui_pad.c rumble_out.c hello_out.c gc_types.h padframe.h shellui_pad.h rumble_out.h hello_out.h
+	$(CC) $(CFLAGS) -o $@ gc_main.c shellui_pad.c rumble_out.c hello_out.c $(LDFLAGS)
 
-ps4-client.elf: gc_main.c shellui_pad.c rumble_out.c gc_types.h padframe.h shellui_pad.h rumble_out.h
-	$(CC) $(CFLAGS) -o $@ gc_main.c shellui_pad.c rumble_out.c $(LDFLAGS)
+ps4-client.elf: gc_main.c shellui_pad.c rumble_out.c hello_out.c gc_types.h padframe.h shellui_pad.h rumble_out.h hello_out.h
+	$(CC) $(CFLAGS) -o $@ gc_main.c shellui_pad.c rumble_out.c hello_out.c $(LDFLAGS)

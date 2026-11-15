@@ -32,16 +32,36 @@ public final class PadServer {
         void onRumble(int large, int small, int ttlMs);
     }
 
+    /** Called on the reader thread when a console sends its HelloFrame. */
+    public interface HelloListener {
+        void onHello(HelloFrame hello, String fromIp);
+    }
+
+    /** How long a provisionally-accepted dialer (IP changed, MAC known) has
+     *  to prove its identity with a Hello before it's dropped. */
+    private static final int HELLO_VALIDATE_MS = 1500;
+
     private final PadMapper mapper;
     private final PowerManager.WakeLock wakeLock;
     private volatile StatusListener listener;
     private volatile RumbleListener rumbleListener;
+    private volatile HelloListener helloListener;
 
     private volatile boolean running = false;
     private volatile boolean clientConnected = false;
     private volatile String clientIp = "";
-    /** When set, only this console's IP is accepted; others are refused. */
+    /** When set, this console's IP is the fast-path match; others are refused
+     *  unless a MAC identifies them (see {@link #allowedClientMac}). */
     private volatile String allowedClientIp;
+    /** The active console's durable MAC once learned. When set, a dialer from
+     *  an unexpected IP is accepted provisionally and must prove this MAC via
+     *  its Hello (DHCP-move tolerant); a different MAC is refused. */
+    private volatile String allowedClientMac;
+    /** Per-connection: true once the current client is confirmed to be the
+     *  active console (IP matched, or Hello MAC matched / learned). */
+    private volatile boolean clientValidated;
+    /** Per-connection: accepted on IP mismatch pending Hello validation. */
+    private volatile boolean clientProvisional;
     private Thread thread;
     private Socket clientSocket;
 
@@ -64,6 +84,10 @@ public final class PadServer {
         this.rumbleListener = l;
     }
 
+    public void setHelloListener(HelloListener l) {
+        this.helloListener = l;
+    }
+
     /**
      * Restrict the server to one console's IP. null accepts any dialer (the
      * behaviour when no console has been chosen yet). Setting this does not
@@ -76,6 +100,21 @@ public final class PadServer {
 
     public String getAllowedClientIp() {
         return allowedClientIp;
+    }
+
+    /**
+     * Set the active console's durable MAC (lowercase "aa:bb:..."), or null
+     * when none is known. With a MAC set, a dialer whose IP no longer matches
+     * is accepted provisionally and must present this MAC in its Hello — so a
+     * DHCP address change no longer loses the console — while a different MAC
+     * is still refused. With no MAC, gating is IP-only (phase-1 behaviour).
+     */
+    public void setAllowedClientMac(String mac) {
+        this.allowedClientMac = mac;
+    }
+
+    public String getAllowedClientMac() {
+        return allowedClientMac;
     }
 
     /** Drop the current console so a switch to another takes effect now. */
@@ -147,12 +186,24 @@ public final class PadServer {
                 }
                 String ip = remoteIp(c);
                 String allowed = allowedClientIp;
+                String allowedMac = allowedClientMac;
+                boolean provisional = false;
                 if (allowed != null && !allowed.equals(ip)) {
-                    // A different console is active; don't let this one in.
-                    Log.i(TAG, "refused " + ip + " (active console is " + allowed + ")");
-                    closeQuietly(c);
-                    continue;
+                    if (allowedMac == null) {
+                        // Phase-1 behaviour: no durable identity, so a dialer
+                        // from the wrong IP is a different console. Refuse it.
+                        Log.i(TAG, "refused " + ip + " (active console is " + allowed + ")");
+                        closeQuietly(c);
+                        continue;
+                    }
+                    // The active console has a MAC and may have changed IP.
+                    // Accept provisionally; its Hello must prove the MAC or
+                    // the reader drops it (serveClient holds frames until then).
+                    provisional = true;
+                    Log.i(TAG, "accepting " + ip + " provisionally (expect MAC " + allowedMac + ")");
                 }
+                clientValidated = !provisional;
+                clientProvisional = provisional;
                 clientSocket = c;
                 clientConnected = true;
                 clientIp = ip;
@@ -185,6 +236,22 @@ public final class PadServer {
 
     private void serveClient(Socket c) {
         try {
+            // A provisionally-accepted dialer (its IP didn't match, but the
+            // active console has a MAC) must prove its identity via its Hello
+            // before we stream any input to it — otherwise a different console
+            // could receive a few frames. The reader sets clientValidated on a
+            // MAC match, or closes the socket on a mismatch.
+            if (clientProvisional) {
+                long deadline = System.currentTimeMillis() + HELLO_VALIDATE_MS;
+                while (running && !clientValidated && !c.isClosed()
+                        && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(20);
+                }
+                if (!clientValidated) {
+                    Log.i(TAG, "dropping " + clientIp + " (no matching Hello)");
+                    return; // finally{} in run() closes the socket and cleans up
+                }
+            }
             OutputStream out = c.getOutputStream();
             byte[] buf = new byte[PadFrame.SIZE];
             PadState snap = new PadState();
@@ -213,35 +280,92 @@ public final class PadServer {
     }
 
     /**
-     * Read RumbleFrames from the PS5. Bytes that don't start a frame are
-     * skipped one at a time, so a stray byte can't desync the stream.
+     * Read the console's inbound frames: a one-shot {@link HelloFrame} (60 B)
+     * and a stream of {@link RumbleFrame}s (8 B), interleaved on one socket.
+     * The frame type is chosen by magic; bytes that start neither frame are
+     * skipped one at a time, so a stray byte can't desync the stream, and an
+     * older payload that sends no Hello still works unchanged.
+     *
+     * On a Hello the reader also runs the MAC gate: if the active console has
+     * a known MAC, a matching Hello validates this (possibly moved) console
+     * and the Hello is surfaced; a different MAC closes the socket. With no
+     * known MAC the Hello is surfaced so the app can learn it.
      * Closing the socket (disconnect or stop) ends the loop.
      */
     private void readClient(Socket c) {
-        byte[] buf = new byte[RumbleFrame.SIZE];
+        final int MAXF = Math.max(RumbleFrame.SIZE, HelloFrame.SIZE);
+        final String ip = remoteIp(c);
+        byte[] buf = new byte[MAXF];
         int have = 0;
         try {
             InputStream in = c.getInputStream();
             while (running) {
-                int n = in.read(buf, have, RumbleFrame.SIZE - have);
-                if (n < 0) break;
-                have += n;
-                if (have < RumbleFrame.SIZE) continue;
-                RumbleFrame f = RumbleFrame.decode(buf, 0);
-                if (f == null) {
-                    System.arraycopy(buf, 1, buf, 0, RumbleFrame.SIZE - 1);
-                    have = RumbleFrame.SIZE - 1;
+                if (have < 4) { // need a magic to know the frame length
+                    int n = in.read(buf, have, MAXF - have);
+                    if (n < 0) break;
+                    have += n;
                     continue;
                 }
-                have = 0;
-                RumbleListener rl = rumbleListener;
-                if (rl != null) rl.onRumble(f.large, f.small, f.ttlMs);
+                int magic = PadFrame.getU32(buf, 0);
+                int need;
+                if (magic == HelloFrame.MAGIC) need = HelloFrame.SIZE;
+                else if (magic == RumbleFrame.MAGIC) need = RumbleFrame.SIZE;
+                else {
+                    // Resync: drop one byte and look for a magic again.
+                    System.arraycopy(buf, 1, buf, 0, have - 1);
+                    have--;
+                    continue;
+                }
+                if (have < need) {
+                    int n = in.read(buf, have, MAXF - have);
+                    if (n < 0) break;
+                    have += n;
+                    continue;
+                }
+                if (need == HelloFrame.SIZE) {
+                    HelloFrame hf = HelloFrame.decode(buf, 0);
+                    if (hf != null && !onHello(hf, ip, c)) break; // MAC mismatch
+                } else {
+                    RumbleFrame rf = RumbleFrame.decode(buf, 0);
+                    if (rf != null) {
+                        RumbleListener rl = rumbleListener;
+                        if (rl != null) rl.onRumble(rf.large, rf.small, rf.ttlMs);
+                    }
+                }
+                System.arraycopy(buf, need, buf, 0, have - need);
+                have -= need;
             }
         } catch (IOException e) {
             // socket closed
         }
         // The PS5 closed its side: drop the link so the writer notices too.
         closeQuietly(c);
+    }
+
+    /**
+     * Handle a decoded Hello: run the MAC gate, mark the client validated, and
+     * surface it. Returns false (and closes the socket) when the Hello's MAC
+     * contradicts the known active MAC — a different console reusing the IP.
+     */
+    private boolean onHello(HelloFrame hf, String ip, Socket c) {
+        String mac = hf.macString();
+        String want = allowedClientMac;
+        if (want != null && mac != null && !want.equalsIgnoreCase(mac)) {
+            Log.i(TAG, "refused " + ip + " via Hello (MAC " + mac
+                    + " != active " + want + ")");
+            closeQuietly(c);
+            return false;
+        }
+        if (want != null && mac == null && clientProvisional) {
+            // Provisional dialer from a new IP that can't prove its MAC: don't
+            // promote it. serveClient will time out and drop it.
+            Log.i(TAG, "Hello from " + ip + " carries no MAC; staying unvalidated");
+            return true;
+        }
+        clientValidated = true; // IP matched the active console, or MAC matched
+        HelloListener hl = helloListener;
+        if (hl != null) hl.onHello(hf, ip);
+        return true;
     }
 
     private static void encodeFrame(byte[] buf, PadState s, int seq) {
