@@ -40,7 +40,7 @@ deploy-ps4: ps4
 
 # ── per-platform build (run via the ps5 / ps4 targets above) ──────────
 # The platform is selected by the -D define: __PROSPERO__ (PS5) /
-# __ORBIS__ (PS4); gc_main.c & shellui_pad.c switch on it via #ifdef.
+# __ORBIS__ (PS4); gc_main.c & hidpad.c switch on it via #ifdef.
 ifeq ($(PLATFORM),ps5)
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 CFLAGS  += -D__PROSPERO__ -Wall -Wextra -g -O2 -fPIC -fno-stack-protector
@@ -53,8 +53,9 @@ else
 $(if $(PLATFORM),$(error PLATFORM must be ps5 or ps4))
 endif
 
-ps5-client.elf: gc_main.c shellui_pad.c rumble_out.c hello_out.c gc_types.h padframe.h shellui_pad.h rumble_out.h hello_out.h
-	$(CC) $(CFLAGS) -o $@ gc_main.c shellui_pad.c rumble_out.c hello_out.c $(LDFLAGS)
+ps5-client.elf: gc_main.c hidpad.c mbus_seat.c hello_out.c rumble_out.c gc_types.h padframe.h hidpad.h mbus_seat.h hello_out.h rumble_out.h
+	$(CC) $(CFLAGS) -o $@ gc_main.c hidpad.c mbus_seat.c hello_out.c rumble_out.c $(LDFLAGS)
 
-ps4-client.elf: gc_main.c shellui_pad.c rumble_out.c hello_out.c gc_types.h padframe.h shellui_pad.h rumble_out.h hello_out.h
-	$(CC) $(CFLAGS) -o $@ gc_main.c shellui_pad.c rumble_out.c hello_out.c $(LDFLAGS)
+ps4-client.elf: gc_main.c hidpad.c hello_out.c rumble_out.c gc_types.h padframe.h hidpad.h hello_out.h rumble_out.h
+	$(CC) $(CFLAGS) -o $@ gc_main.c hidpad.c hello_out.c rumble_out.c $(LDFLAGS)
+

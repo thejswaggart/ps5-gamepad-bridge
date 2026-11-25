@@ -212,8 +212,9 @@ ps5-gamepad-bridge/
 ├─ Makefile                          # top-level: android / ps5 / deploy
 ├─ client/                           # PS5 + PS4 payload (x86-64 ELF), one tree
 │  ├─ gc_main.c                     #   main: config, LAN scan, TCP client, VDI
+│  ├─ hidpad.c / .h                #   /dev/hid virtual pad (ps_pad_*), from ProsperoSunshine-PS4
+│  ├─ mbus_seat.c / .h             #   PS5 in-process libSceMbus bind (profile_seat port)
 │  ├─ rumble_out.c / .h            #   reads game rumble, sends RumbleFrames back
-│  ├─ shellui_pad.c / .h           #   shell UI / pad glue
 │  ├─ gc_types.h                   #   SCE pad types
 │  ├─ padframe.h                   #   PadFrame + RumbleFrame wire contract (PS5 side)
 │  ├─ fake_phone.py                #   isolated test: fake phone server

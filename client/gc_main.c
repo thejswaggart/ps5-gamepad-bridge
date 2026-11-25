@@ -8,7 +8,7 @@
  * 32-byte little-endian PadFrame per tick at ~60 Hz. This payload parses
  * each frame into an ScePadData and injects it via the virtual DualSense.
  *
- * Flow: klog thread -> TCP client thread (drives VDA create/delete) -> keep-alive.
+ * Flow: TCP client thread (drives the /dev/hid VDA create/delete) -> keep-alive.
  */
 
 #include <stdarg.h>
@@ -39,7 +39,8 @@
 #include <ps4/mdbg.h>
 #endif
 
-#include "shellui_pad.h"
+#include "hidpad.h"
+#include "mbus_seat.h"
 #include "rumble_out.h"
 #include "hello_out.h"
 #include "gc_types.h"
@@ -85,68 +86,23 @@ extern int32_t sceUserServiceGetInitialUser(int32_t *outUserId);
 extern int32_t sceUserServiceGetForegroundUser(int32_t *outUserId);
 extern int32_t scePadInit(void);
 extern int32_t scePadSetProcessPrivilege(int32_t privilege);
-extern int32_t scePadGetHandle(int32_t userId, int32_t type, int32_t index);
-extern int32_t scePadVirtualDeviceAddDevice(void *param, int32_t deviceType);
 extern int32_t scePadVirtualDeviceDeleteDevice(int32_t handle);
 extern int32_t scePadVirtualDeviceInsertData(int32_t handle, const void *padData);
 extern int32_t sceKernelSendNotificationRequest(int unk0, void *req, size_t size, int unk1);
 
-/* Virtual device type passed to scePadVirtualDeviceAddDevice().
- * 3 = DualShock 4 on PS4 (confirmed by Control4Free, a working PS4 payload
- * that creates a virtual DS4 with type 3) and DualSense on PS5. Both
- * platforms use 3. */
-#define VIRTUAL_DEVICE_TYPE 3
 
 /* ── Single controller slot ───────────────────────────────────────────── */
 #define MAX_SLOTS 1
 
 typedef struct {
-    volatile int32_t handle;        /* VDA handle, -1 = not ready */
+    volatile int32_t handle;        /* VDA handle (== /dev/hid ADD handle), -1 = not ready */
     volatile int     vdi_ready;
     volatile uint32_t inject_count;
-#ifdef __ORBIS__
-    volatile int     vda_gave_up;  /* set when no handle could be obtained */
-#endif
+    ps_pad         *pad;           /* the /dev/hid pad (ps_pad_open); NULL = none */
 } ctrl_slot_t;
 
 static ctrl_slot_t     g_slots[MAX_SLOTS];
 static int32_t         g_inject_uid = 0x10000000;
-
-/* ── klog device-ID queue ─────────────────────────────────────────────── */
-#define KLOG_QSIZE 16
-static uint64_t        g_klog_q[KLOG_QSIZE];
-static int             g_klog_qw = 0, g_klog_qr = 0;
-static pthread_mutex_t g_klog_lock = PTHREAD_MUTEX_INITIALIZER;
-
-#ifdef __ORBIS__
-/* Set once the klog thread has drained the ring-buffer backlog (see
- * klog_capture_thread): only then is a DEVICE_ADDED line one we created,
- * not a stale one from boot. create_vda_for_slot waits for this before
- * calling scePadVirtualDeviceAddDevice. */
-static volatile int g_klog_drained = 0;
-#endif
-
-static void klog_enqueue(uint64_t id) {
-    pthread_mutex_lock(&g_klog_lock);
-    int next = (g_klog_qw + 1) % KLOG_QSIZE;
-    if (next != g_klog_qr) { g_klog_q[g_klog_qw] = id; g_klog_qw = next; }
-    pthread_mutex_unlock(&g_klog_lock);
-}
-
-static uint64_t klog_dequeue_ms(int ms) {
-    for (int t = 0; t < ms; t += 100) {
-        pthread_mutex_lock(&g_klog_lock);
-        if (g_klog_qw != g_klog_qr) {
-            uint64_t id = g_klog_q[g_klog_qr];
-            g_klog_qr = (g_klog_qr + 1) % KLOG_QSIZE;
-            pthread_mutex_unlock(&g_klog_lock);
-            return id;
-        }
-        pthread_mutex_unlock(&g_klog_lock);
-        usleep(100000);
-    }
-    return 0;
-}
 
 /* ── Notification ─────────────────────────────────────────────────────── */
 typedef struct { char _unk[45]; char message[3075]; } NotifyRequest;
@@ -155,103 +111,6 @@ static void notify(const char *fmt, ...) {
     memset(&req, 0, sizeof(req));
     va_start(ap, fmt); vsnprintf(req.message, sizeof(req.message), fmt, ap); va_end(ap);
     sceKernelSendNotificationRequest(0, &req, sizeof(req), 0);
-}
-
-/* ── klog capture thread ──────────────────────────────────────────────── */
-static uint64_t parse_hex_str(const char *s) {
-    uint64_t v = 0;
-    while (*s) {
-        char c = *s++;
-        if      (c >= '0' && c <= '9') v = (v<<4)|(c-'0');
-        else if (c >= 'a' && c <= 'f') v = (v<<4)|(c-'a'+10);
-        else if (c >= 'A' && c <= 'F') v = (v<<4)|(c-'A'+10);
-        else break;
-    }
-    return v;
-}
-
-/* PS4 klog DEVICE_ADDED line (confirmed by Control4Free, a working PS4
- * payload): "#LOGIN MGR# Receive Event : SCE_MBUS_EVENT_DEVICE_ADDED
- * [DeviceId:0x7030d][type:1][subType:2]" -- subType:2 is the Remote Play
- * (virtual) pad. The PS5 line differs (subType:22, capabilityBattery),
- * so match the PS4 strings. */
-static void parse_klog_line(const char *line) {
-    if (!strstr(line, "DEVICE_ADDED"))        return;
-#ifdef __ORBIS__
-    if (!strstr(line, "subType:2"))           return;
-#else
-    if (!strstr(line, "subType:22"))          return;
-    if (!strstr(line, "capabilityBattery:0")) return;
-#endif
-    const char *p = strstr(line, "DeviceId:0x");
-    if (!p) p = strstr(line, "deviceId=0x");
-    if (!p) return;
-    p += 11;
-    uint64_t id = parse_hex_str(p);
-    if (!id) return;
-    gp_log("klog: VDA device 0x%llx\n", (unsigned long long)id);
-    klog_enqueue(id);
-}
-
-/* TODO(PS4): /dev/klog and the 127.0.0.1:3232 TCP klog bridge are the PS5
- * klog access paths. PS4 klog access is not verified (klog_printf exists
- * in the PS4 SDK, but the device file / TCP service may differ). */
-static void *klog_capture_thread(void *arg) {
-    (void)arg;
-    char buf[512], line[1024]; size_t line_len = 0;
-    int fd = open("/dev/klog", O_RDONLY);
-    if (fd < 0) {
-        gp_log("klog: /dev/klog errno=%d, trying TCP 127.0.0.1:3232\n", errno);
-        struct sockaddr_in sin; int sock = socket(AF_INET, SOCK_STREAM, 0);
-        if (sock < 0) return NULL;
-        memset(&sin,0,sizeof(sin)); sin.sin_family=AF_INET;
-        sin.sin_addr.s_addr=inet_addr("127.0.0.1"); sin.sin_port=htons(3232);
-        for (int r=0; r<10; r++) {
-            if (connect(sock,(struct sockaddr*)&sin,sizeof(sin))==0){fd=sock;gp_log("klog: connected\n");break;}
-            usleep(500000);
-        }
-        if (fd<0){close(sock);return NULL;}
-    }
-#ifdef __ORBIS__
-    /* Drain the klog backlog before capturing: the stream (the TCP
-     * 127.0.0.1:3232 bridge, or /dev/klog) replays the whole ring buffer
-     * from boot, which can contain DEVICE_ADDED lines for virtual pads
-     * created before this process started (orphaned devices from a
-     * previous run, ...). Enqueuing those stale IDs would hand
-     * create_vda_for_slot the wrong DeviceId. So write a marker and read
-     * until it comes back: that proves the reader has reached the end of
-     * the backlog and is now live. (Control4Free does exactly this.) */
-    gp_log("klog: draining backlog\n");
-    gp_log("KLOG-DRAIN\n");
-    int drained = 0;
-#endif
-    while (1) {
-        ssize_t len = read(fd, buf, sizeof(buf));
-        if (len < 0) { if (errno==EINTR) continue; break; }
-        if (len == 0) { usleep(10000); continue; }
-        for (ssize_t i=0; i<len; i++) {
-            char c = buf[i];
-            if (c=='\n'||line_len>=sizeof(line)-1){
-                line[line_len]='\0';
-#ifdef __ORBIS__
-                if (!drained) {
-                    if (strstr(line, "[GC] KLOG-DRAIN")) {
-                        drained = 1;
-                        g_klog_drained = 1;
-                        gp_log("klog: backlog drained (live)\n");
-                    }
-                } else {
-                    parse_klog_line(line);
-                }
-#else
-                parse_klog_line(line);
-#endif
-                line_len=0;
-            }
-            else if (c!='\r') line[line_len++]=c;
-        }
-    }
-    close(fd); return NULL;
 }
 
 /* ── VDI injection ────────────────────────────────────────────────────── */
@@ -605,28 +464,10 @@ static void *tcp_client(void *arg) {
                 /* Pad connected: make sure the virtual device exists, then
                  * stream its data. Creation is what makes the PS5 show a
                  * controller (the connected field alone is not honored). */
-#ifdef __ORBIS__
-                if (!g_slots[0].vdi_ready && !g_slots[0].vda_gave_up) {
-#else
                 if (!g_slots[0].vdi_ready) {
-#endif
                     int32_t h = create_vda_for_slot(0);
-                    if (h >= 0) {
-                        g_slots[0].handle       = h;
-                        g_slots[0].vdi_ready    = 1;
-                        g_slots[0].inject_count = 0;
-                        rumble_out_set_handle(h);
-                    } else {
-#ifdef __ORBIS__
-                        /* create_vda_for_slot set vda_gave_up (no handle);
-                         * do NOT retry next frame (would orphan another
-                         * device we can't address). */
-                        if (g_slots[0].vda_gave_up)
-                            gp_log("tcp: VDA gave up (no handle); not retrying\n");
-#else
-                        gp_log("tcp: VDA create failed (retry next frame)\n");
-#endif
-                    }
+                    if (h < 0)
+                        gp_log("tcp: /dev/hid ADD failed (retry next frame)\n");
                 }
                 if (g_slots[0].vdi_ready) {
                     ScePadData pad;
@@ -654,77 +495,37 @@ static void *tcp_client(void *arg) {
     return NULL;
 }
 
-/* ── VDA creation ─────────────────────────────────────────────────────── */
-/* TODO(PS4): the vdp param struct (size/userId/pad[6]) is the PS5
- * ScePadVirtualDeviceAddDevice layout; the PS4 param struct is not
- * verified. */
+/* ── VDA creation ───────────────────────────────────────────────── ─ */
+/* The /dev/hid ADD ioctl hands back the handle synchronously (no klog), so a
+ * failed ADD creates no device: it is safe to retry next frame. */
 static int32_t create_vda_for_slot(int slot) {
-    struct { int32_t size; int32_t userId; int32_t pad[6]; } vdp;
-    const int32_t SEN = (int32_t)0xDEADBEEFu;
-    memset(&vdp,0,sizeof(vdp)); vdp.size=sizeof(vdp); vdp.userId=1;
-    for(int k=0;k<6;k++) vdp.pad[k]=SEN;
-
-    int ret = scePadVirtualDeviceAddDevice(&vdp, VIRTUAL_DEVICE_TYPE);
-    gp_log("slot[%d] VDA ret=0x%08x\n", slot, (uint32_t)ret);
-
-    int32_t handle = (ret > 0) ? ret : -1;
-    for(int k=0;k<6;k++){
-        if(vdp.pad[k]!=SEN && vdp.pad[k]>0){if(handle<0)handle=vdp.pad[k];break;}
-    }
-
-    uint64_t dev_id = klog_dequeue_ms(10000);
-    if (dev_id) {
-        handle = (int32_t)(dev_id & 0xffffffffu);
+    uint32_t user;
 #ifdef __ORBIS__
-        /* PS4: no force_bind. The device is created unassigned (user 1),
-         * so the PS4 shows its own "Who's using this controller?" screen
-         * and the user picks there. sceMbusBindDeviceWithUserId (what
-         * force_bind calls) does not return in a PS4 payload process
-         * (PS4-AnyController), so it is not called. The klog DeviceId
-         * IS the handle for scePadVirtualDeviceInsertData. */
-        gp_log("slot[%d] PS4: handle=0x%x from klog DeviceId (no force_bind; user picks on console)\n",
-               slot, (uint32_t)handle);
+    user = ps_pad_default_user();
+    if (!user) user = PS_PAD_NO_USER;
 #else
-        int br = shellui_pad_force_bind(dev_id, g_inject_uid);
-        gp_log("slot[%d] force_bind(0x%llx, 0x%08x) ret=%d\n",
-               slot, (unsigned long long)dev_id, (uint32_t)g_inject_uid, br);
+    user = (uint32_t)g_inject_uid;
 #endif
-    } else if (handle >= 0) {
-        gp_log("slot[%d] klog timeout - using direct handle %d\n", slot, handle);
-    } else {
-        gp_log("slot[%d] GetHandle scan...\n", slot);
-        /* TODO(PS4): type 3 (DualSense) and the 0x10000000 user-ID range
-         * are PS5 values; the PS4 DS4 type / user-ID scheme are not
-         * verified. */
-        static const int32_t uids[]={1,0x10000000,(int32_t)0xffffffff};
-        for(int ui=0;ui<3&&handle<0;ui++)
-            for(int idx=0;idx<8&&handle<0;idx++){
-                handle=scePadGetHandle(uids[ui],3,idx);
-                if(handle>=0) gp_log("slot[%d] GetHandle uid=0x%08x idx=%d h=%d\n",
-                                     slot,(uint32_t)uids[ui],idx,handle);
-            }
+    ps_pad *pad = NULL;
+    int rc = ps_pad_open(user, &pad);
+    if (rc != 0) {
+        gp_log("slot[%d] /dev/hid ADD failed ret=%d\n", slot, rc);
+        return -1;
     }
-    if (handle>=0) {
-        gp_log("slot[%d] VDI handle=0x%x ready\n", slot, (uint32_t)handle);
-    } else {
-#ifdef __ORBIS__
-        /* No handle at all: on PS4 the device IS created (VDA returned
-         * 0x803b0006) but we have no DeviceId to address it. Do NOT retry:
-         * a retry creates another orphaned device we can't address, and
-         * enough of them fill the PS4's controller slots ("Cannot connect
-         * another controller"). Stop creating until the payload is
-         * restarted. (Control4Free: "If no line arrives, it stops creating
-         * controllers until it is restarted, rather than leave devices
-         * behind that it can no longer address.") */
-        g_slots[slot].vda_gave_up = 1;
-        gp_log("slot[%d] ERROR: no VDA handle - NOT retrying (avoids orphaned devices)\n", slot);
-#else
-        gp_log("slot[%d] ERROR: no VDA handle\n", slot);
+    uint32_t dev_id = ps_pad_device_id(pad);
+#ifdef __PROSPERO__
+    int br = hidpad_mbus_bind(dev_id, user);
+    gp_log("slot[%d] mbus bind(0x%x, 0x%08x) ret=%d\n", slot, dev_id, user, br);
 #endif
-    }
-    return handle;
+    g_slots[slot].pad          = pad;
+    g_slots[slot].handle       = (int32_t)dev_id;
+    g_slots[slot].vdi_ready    = 1;
+    g_slots[slot].inject_count = 0;
+    rumble_out_set_handle((int32_t)dev_id);
+    gp_log("slot[%d] /dev/hid ADD handle=0x%x ready (user=0x%08x)\n",
+           slot, dev_id, user);
+    return (int32_t)dev_id;
 }
-
 /* Delete the virtual device for a slot: the PS5 then shows NO controller.
  * (The PS5 does not honor the injected connected field; device existence
  * is what the system UI tracks. See R1.) */
@@ -733,6 +534,11 @@ static void delete_vda_for_slot(int slot) {
     if (h >= 0) {
         scePadVirtualDeviceDeleteDevice(h);
         gp_log("slot[%d] VDA deleted (handle=0x%x)\n", slot, (uint32_t)h);
+    }
+    if (g_slots[slot].pad) {
+        int rc = ps_pad_close(g_slots[slot].pad);
+        g_slots[slot].pad = NULL;
+        gp_log("slot[%d] /dev/hid close ret=%d\n", slot, rc);
     }
     g_slots[slot].handle       = -1;
     g_slots[slot].vdi_ready    = 0;
@@ -747,10 +553,10 @@ static void elevate_credentials(void) {
 #ifdef __PROSPERO__
     kernel_set_ucred_authid(p, 0x3800000000010003l);
 #else
-    /* TODO(PS4): PS4 authid for SceShellCore. shellui_pad.c's PS4 path
-     * elevates to 0x4800000000010003, so this is the strong candidate.
-     * The all-0xff caps are a PS5 placeholder; the PS4 caps layout is
-     * not verified. */
+    /* TODO(PS4): PS4 authid for SceShellCore. 0x4800000000010003 is the
+     * strong candidate (the PS5 value is 0x3800000000010003); the
+     * all-0xff caps are a PS5 placeholder, the PS4 caps layout is not
+     * verified. */
     kernel_set_ucred_authid(p, 0x4800000000010003l);
 #endif
     kernel_set_ucred_caps(p, caps);
@@ -780,9 +586,6 @@ int main(void) {
     g_slots[0].handle       = -1;
     g_slots[0].vdi_ready    = 0;
     g_slots[0].inject_count = 0;
-#ifdef __ORBIS__
-    g_slots[0].vda_gave_up  = 0;
-#endif
 
     sceUserServiceInitialize(NULL);
     sceUserServiceGetInitialUser(&userId);
@@ -806,13 +609,6 @@ int main(void) {
         if (scePadVirtualDeviceDeleteDevice(dh)==0) gp_log("deleteDevice(%d)\n", dh);
     }
 
-    /* Start klog capture thread first - must be running before any VDA call */
-    pthread_t klog_tid;
-    if (pthread_create(&klog_tid, NULL, klog_capture_thread, NULL)==0) {
-        pthread_detach(klog_tid);
-        gp_log("klog thread started\n");
-    }
-    usleep(300000); /* let klog thread connect before first VDA */
 
     /* The virtual DualSense is created/deleted dynamically by the TCP
      * client thread from the phone's connected state. It starts DOWN: the
